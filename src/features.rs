@@ -573,7 +573,8 @@ where
     let mut supporeted = Vec::new();
 
     let (mut tpos, mut ins) = (-1i16, 0);
-    for col in bases.axis_iter(Axis(0)) {
+    for (col_idx, col) in bases.axis_iter(Axis(0)).enumerate() {
+        let qual_col = quals.index_axis(Axis(0), col_idx);
         if col[0] == b'*' {
             ins += 1;
         } else {
@@ -584,10 +585,14 @@ where
         let mut has_dot = false;
 
         counter.iter_mut().for_each(|(_, c)| *c = 0);
-        col.iter().for_each(|&b| {
+        col.iter().zip(qual_col.iter()).for_each(|(&b, &q)| {
             if b == b'.' {
                 has_dot = true;
                 return;
+            }
+
+            if q < 10 {
+                return; // skip low-quality base
             }
 
             *counter.get_mut(&BASE_FORWARD[b as usize]).unwrap() += 1;
