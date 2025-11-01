@@ -436,7 +436,7 @@ pub(crate) fn extract_features<'a, T: FeaturesOutput<'a>>(
             })
             .collect();
 
-        let supported = get_supported(&bases, module);
+        let supported = get_supported(&bases, &quals, module);
 
 
 
@@ -558,7 +558,7 @@ fn calculate_accuracy(window: &OverlapWindow, cigar: &[u8], tseq: &[u8], qseq: &
 }
 
 
-fn get_supported<S>(bases: &ArrayBase<S, Ix2>, module: &str) -> Vec<SupportedPos>
+fn get_supported<S>(bases: &ArrayBase<S, Ix2>, quals: &ArrayBase<S, Ix2>, module: &str) -> Vec<SupportedPos>
 where
     S: Data<Elem = u8>,
 {
