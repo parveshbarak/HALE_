@@ -604,7 +604,7 @@ where
 
         let n_supported = counter
             .iter()
-            .fold(0u8, |acc, (_, &c)| if c >= 3 { acc + 1 } else { acc });
+            .fold(0u8, |acc, (_, &c)| if c >= 2 { acc + 1 } else { acc });
         if !has_dot && module != "consensus" && n_supported >= 2 {
             supporeted.push(SupportedPos::new(tpos as u16, ins));
         }

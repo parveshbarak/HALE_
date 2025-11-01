@@ -334,7 +334,7 @@ fn get_col_weight(bases: &Array2<u8>) -> Vec<f32> {
         weights[i] = 1 as f32;
 
         if base_counts[4]==max_base || base_counts[4]==second_max {
-            weights[i] = 1 as f32;
+            weights[i] = 0.1 as f32;
         }
 
         // if base_counts[4]==max_base || bases[[0,i]] == BASES_MAP[b'*' as usize] || bases[[0,i]] == BASES_MAP[b'#' as usize] {
