@@ -115,7 +115,7 @@ pub fn error_correction<T, U, V>(
                         rid,
                         ref_reads,
                         alns,
-                        window_size,
+                        // window_size,
                         module,
                         (&mut tbuf, &mut qbuf),
                         &mut feats_output,

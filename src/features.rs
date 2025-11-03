@@ -43,54 +43,79 @@ fn get_max_ins_for_window(
     overlaps: &[OverlapWindow], // Sorted overlaps
     ovlps_cigar_map: &HashMap<u32, &Vec<u8>>,
     tid: u32,
-    tstart: usize,
     window_length: usize,
 ) -> Vec<u16> {
     let mut max_ins = vec![0; window_length];
-    for ow in overlaps.iter().take(TOP_K) {
-        let mut tpos = ow.tstart as usize - tstart;
+    for ow in overlaps.iter() {
+        let is_target = ow.overlap.tid == tid;
+        if is_target {
+            let mut tpos = ow.overlap.tstart as usize;
+            // Handle cigar
+            let qid = ow.overlap.return_other_id(tid);
+            let cigar = ovlps_cigar_map.get(&qid).unwrap();
+            //let cigar_len = ow.cigar_end_idx - ow.cigar_start_idx + 1;
+            let cigar_iter = CigarIter::new(&cigar);
 
-        // Handle cigar
-        let qid = ow.overlap.return_other_id(tid);
-        let cigar = ovlps_cigar_map.get(&qid).unwrap();
-        //let cigar_len = ow.cigar_end_idx - ow.cigar_start_idx + 1;
-        let cigar_iter = CigarIter::new(&cigar[ow.cigar_start_idx..ow.cigar_end_idx]);
+            cigar_iter.for_each(|(op, range)| {
+                let l = match op {
+                    CigarOp::Match(l) | CigarOp::Mismatch(l) | CigarOp::Deletion(l) => l as usize,
+                    CigarOp::Insertion(l) => {
+                        assert!(
+                            tpos <= max_ins.len(),
+                            "Length {} is bigger than the tseq {}. {} {} {} {:?} {:?}",
+                            tpos,
+                            max_ins.len(),
+                            ow.cigar_start_offset,
+                            op.get_length(),
+                            std::str::from_utf8(cigar).unwrap(),
+                            range,
+                            ow.cigar_start_idx..ow.cigar_end_idx
+                        );
 
-        cigar_iter.for_each(|(op, range)| {
-            let l = match op {
-                CigarOp::Match(l) | CigarOp::Mismatch(l) | CigarOp::Deletion(l) => l as usize,
-                CigarOp::Insertion(l) => {
-                    assert!(
-                        tpos <= max_ins.len(),
-                        "Length {} is bigger than the tseq {}. {} {} {} {:?} {:?}",
-                        tpos,
-                        max_ins.len(),
-                        ow.cigar_start_offset,
-                        op.get_length(),
-                        std::str::from_utf8(cigar).unwrap(),
-                        range,
-                        ow.cigar_start_idx..ow.cigar_end_idx
-                    );
-
-                    max_ins[tpos - 1] = max_ins[tpos - 1].max(l as u16);
-                    return;
-                }
-            };
-
-            if range == (0..ow.cigar_end_idx - ow.cigar_start_idx) {
-                tpos += (ow.cigar_end_offset - ow.cigar_start_offset) as usize;
-            } else if range.start == 0 {
-                tpos += l - ow.cigar_start_offset as usize;
-            } else if range.end == ow.cigar_end_idx - ow.cigar_start_idx {
-                tpos += ow.cigar_end_offset as usize;
-            } else {
+                        max_ins[tpos - 1] = max_ins[tpos - 1].max(l as u16);
+                        return;
+                    }
+                };
                 tpos += l;
-            }
-        });
+            });
+        } else {
+            let mut tpos = ow.overlap.qstart as usize;
+            // Handle cigar
+            let qid = ow.overlap.return_other_id(tid);
+            let cigar = ovlps_cigar_map.get(&qid).unwrap();
+            //let cigar_len = ow.cigar_end_idx - ow.cigar_start_idx + 1;
+            let cigar_iter = CigarIter::new(&cigar);
+
+            cigar_iter.for_each(|(op, range)| {
+                let l = match op {
+                    CigarOp::Match(l) | CigarOp::Mismatch(l) | CigarOp::Insertion(l) => l as usize,
+                    CigarOp::Deletion(l) => {
+                        assert!(
+                            tpos <= max_ins.len(),
+                            "Length {} is bigger than the tseq {}. {} {} {} {:?} {:?}",
+                            tpos,
+                            max_ins.len(),
+                            ow.cigar_start_offset,
+                            op.get_length(),
+                            std::str::from_utf8(cigar).unwrap(),
+                            range,
+                            ow.cigar_start_idx..ow.cigar_end_idx
+                        );
+
+                        max_ins[tpos - 1] = max_ins[tpos - 1].max(l as u16);
+                        return;
+                    }
+                };
+                tpos += l;
+            });
+        }
     }
 
     max_ins
 }
+
+
+
 
 fn get_query_region(window: &OverlapWindow, tid: u32) -> (u32, u32) {
     let (qstart, qend) = if window.overlap.tid == tid {
@@ -111,7 +136,6 @@ fn get_features_for_ol_window(
     window: &OverlapWindow,
     cigar: &[u8],
     query: &HAECRecord,
-    offset: usize,
     tid: u32,
     max_ins: &[u16],
     qbuffer: &mut [u8],
@@ -123,11 +147,19 @@ fn get_features_for_ol_window(
         (window.overlap.tstart, window.overlap.tend)
     };
 
+    let (tstart, tend) = if window.overlap.tid != tid {
+        (window.overlap.qstart, window.overlap.qend)
+    } else {
+        (window.overlap.tstart, window.overlap.tend)
+    };
+
+    let is_target = window.overlap.tid == tid;
+
     let mut query_iter: Box<dyn DoubleEndedIterator<Item = (&u8, &u8)>> =
         match window.overlap.strand {
             Strand::Forward => {
-                let range = (qstart + window.qstart) as usize..(qstart + window.qend) as usize;
-                let qlen = (window.qend - window.qstart) as usize;
+                let range = qstart as usize..qend as usize;
+                let qlen = qend as usize - qstart as usize;
 
                 query.seq.get_subseq(range.clone(), qbuffer);
                 let quals = &query.qual[range];
@@ -135,8 +167,8 @@ fn get_features_for_ol_window(
                 Box::new(qbuffer[..qlen].iter().zip(quals))
             }
             Strand::Reverse => {
-                let range = (qend - window.qend) as usize..(qend - window.qstart) as usize;
-                let qlen = (window.qend - window.qstart) as usize;
+                let range = qstart as usize..qend as usize;
+                let qlen = qend as usize - qstart as usize;
 
                 query.seq.get_rc_subseq(range.clone(), qbuffer);
                 let quals = &query.qual[range];
@@ -159,7 +191,7 @@ fn get_features_for_ol_window(
 
     // Handle cigar
     //let cigar = cigar[window.cigar_start_idx as usize..cigar_end].iter();
-    let cigar = CigarIter::new(&cigar[window.cigar_start_idx..window.cigar_end_idx]);
+    let cigar = CigarIter::new(&cigar);
 
     // Get features
     let gap = if let Strand::Forward = window.overlap.strand {
@@ -169,8 +201,8 @@ fn get_features_for_ol_window(
     };
     bases.fill(gap); // Initialize with gap token
 
-    let mut tpos = offset; // position in the target read (excluding insertions)
-    let mut idx = offset + max_ins[..offset].iter().map(|v| *v as usize).sum::<usize>(); // position in the features (including insertions)
+    let mut tpos = tstart as usize; // position in the target read (excluding insertions)
+    let mut idx = tstart as usize + max_ins[..tstart as usize].iter().map(|v| *v as usize).sum::<usize>(); // position in the features (including insertions)
 
     if idx > 0 {
         // No alignment at the start
@@ -185,54 +217,88 @@ fn get_features_for_ol_window(
             | CigarOp::Insertion(l) => l as usize,
         };
 
-        // Calculate true length
-        if (0..window.cigar_end_idx - window.cigar_start_idx) == range {
-            l = (window.cigar_end_offset - window.cigar_start_offset) as usize;
-        } else if range.start == 0 {
-            l -= window.cigar_start_offset as usize;
-        } else if range.end == window.cigar_end_idx - window.cigar_start_idx {
-            l = window.cigar_end_offset as usize;
-        }
-
         // Write features
-        match op {
-            CigarOp::Match(_) | CigarOp::Mismatch(_) => {
-                for i in 0..l {
-                    let (base, qual) = query_iter
-                        .next()
-                        .expect("Base and its quality should be present.");
-                    bases[idx] = *base;
-                    quals[idx] = *qual;
+        if is_target {
+            match op {
+                CigarOp::Match(_) | CigarOp::Mismatch(_) => {
+                    for i in 0..l {
+                        let (base, qual) = query_iter
+                            .next()
+                            .expect("Base and its quality should be present.");
+                        bases[idx] = *base;
+                        quals[idx] = *qual;
 
-                    idx += 1 + max_ins[tpos + i] as usize;
+                        idx += 1 + max_ins[tpos + i] as usize;
+                    }
+
+                    tpos += l;
                 }
+                CigarOp::Deletion(_) => {
+                    for i in 0..l {
+                        // No need to write gap, gap is already written
+                        idx += 1 + max_ins[tpos + i] as usize;
+                    }
 
-                tpos += l;
+                    tpos += l;
+                }
+                CigarOp::Insertion(_) => {
+                    /*assert!(
+                        max_ins[tpos - 1] as usize >= l,
+                        "Insertion length is bigger than max_ins"
+                    );*/
+
+                    idx -= max_ins[tpos - 1] as usize; // Return to first insertion for the previous base
+                    for i in 0..l {
+                        let (base, qual) = query_iter
+                            .next()
+                            .expect("Base and its quality should be present.");
+
+                        bases[idx + i] = *base;
+                        quals[idx + i] = *qual;
+                    }
+                    idx += max_ins[tpos - 1] as usize; // Move back to the last base
+                }
             }
-            CigarOp::Deletion(_) => {
-                for i in 0..l {
-                    // No need to write gap, gap is already written
-                    idx += 1 + max_ins[tpos + i] as usize;
+        } else {
+            match op {
+                CigarOp::Match(_) | CigarOp::Mismatch(_) => {
+                    for i in 0..l {
+                        let (base, qual) = query_iter
+                            .next()
+                            .expect("Base and its quality should be present.");
+                        bases[idx] = *base;
+                        quals[idx] = *qual;
+
+                        idx += 1 + max_ins[tpos + i] as usize;
+                    }
+
+                    tpos += l;
                 }
+                CigarOp::Insertion(_) => {
+                    for i in 0..l {
+                        // No need to write gap, gap is already written
+                        idx += 1 + max_ins[tpos + i] as usize;
+                    }
 
-                tpos += l;
-            }
-            CigarOp::Insertion(_) => {
-                /*assert!(
-                    max_ins[tpos - 1] as usize >= l,
-                    "Insertion length is bigger than max_ins"
-                );*/
-
-                idx -= max_ins[tpos - 1] as usize; // Return to first insertion for the previous base
-                for i in 0..l {
-                    let (base, qual) = query_iter
-                        .next()
-                        .expect("Base and its quality should be present.");
-
-                    bases[idx + i] = *base;
-                    quals[idx + i] = *qual;
+                    tpos += l;
                 }
-                idx += max_ins[tpos - 1] as usize; // Move back to the last base
+                CigarOp::Deletion(_) => {
+                    /*assert!(
+                        max_ins[tpos - 1] as usize >= l,
+                        "Insertion length is bigger than max_ins"
+                    );*/
+
+                    idx -= max_ins[tpos - 1] as usize; // Return to first insertion for the previous base
+                    for i in 0..l {
+                        let (base, qual) = query_iter
+                            .next()
+                            .expect("Base and its quality should be present.");
+
+                        bases[idx + i] = *base;
+                        quals[idx + i] = *qual;
+                    }
+                    idx += max_ins[tpos - 1] as usize; // Move back to the last base
+                }
             }
         }
     });
@@ -244,7 +310,6 @@ fn get_features_for_ol_window(
 }
 
 fn write_target_for_window(
-    tstart: usize,
     target: &HAECRecord,
     max_ins: &[u16],
     mut bases: ArrayViewMut1<'_, u8>,
@@ -255,9 +320,9 @@ fn write_target_for_window(
     bases.fill(b'*'); // Fill like forward
 
     let mut tpos = 0;
-    tbuffer[tstart..tstart + window_length]
+    tbuffer
         .iter()
-        .zip(target.qual[tstart..tstart + window_length].iter())
+        .zip(target.qual.iter())
         .enumerate()
         .for_each(|(i, (b, q))| {
             bases[tpos] = *b;
@@ -273,20 +338,19 @@ fn get_features_for_window(
     tid: u32,
     reads: &[HAECRecord],
     max_ins: &[u16],
-    tstart: usize,
     window_length: usize, // Full window length
     tbuffer: &[u8],
     qbuffer: &mut [u8],
 ) -> (Array2<u8>, Array2<u8>) {
     //Get features
     let length = max_ins.iter().map(|v| *v as usize).sum::<usize>() + max_ins.len();
+    let width = 1 + overlaps.len();
 
-    let mut bases = Array::from_elem((length, 1 + TOP_K), b'.');
-    let mut quals = Array::from_elem((length, 1 + TOP_K), b'!');
+    let mut bases = Array::from_elem((length, width), b'.');
+    let mut quals = Array::from_elem((length, width), b'!');
 
     // First write the target
     write_target_for_window(
-        tstart,
         &reads[tid as usize],
         &max_ins,
         bases.index_axis_mut(Axis(1), 0),
@@ -296,7 +360,7 @@ fn get_features_for_window(
     );
 
     // Write top-k overlaps for the window
-    overlaps.iter().take(TOP_K).enumerate().for_each(|(i, ow)| {
+    overlaps.iter().enumerate().for_each(|(i, ow)| {
         let qid = ow.overlap.return_other_id(tid);
         get_features_for_ol_window(
             bases.index_axis_mut(Axis(1), i + 1),
@@ -304,15 +368,16 @@ fn get_features_for_window(
             ow,
             ovlps_cigar_map.get(&qid).unwrap(),
             &reads[qid as usize],
-            ow.tstart as usize - tstart,
             tid,
             &max_ins,
             qbuffer,
         )
     });
 
+
     (bases, quals)
 }
+
 
 fn overlap_window_filter(cigar: &[u8]) -> bool {
     let long_indel = CigarIter::new(cigar).any(|(op, _)| match op {
@@ -327,13 +392,15 @@ pub(crate) fn extract_features<'a, T: FeaturesOutput<'a>>(
     rid: u32,
     reads: &'a [HAECRecord],
     overlaps: Vec<Alignment>,
-    window_size: u32,
+    // window_size: u32,
     module: &str,
     (tbuf, qbuf): (&mut [u8], &mut [u8]),
     feats_output: &mut T,
 ) {
     let read = &reads[rid as usize];
     reads[rid as usize].seq.get_sequence(tbuf);
+
+    let window_size = read.seq.len();
 
     // Get overlaps for windows
     let n_windows = (read.seq.len() + window_size as usize - 1) / window_size as usize;
@@ -343,7 +410,7 @@ pub(crate) fn extract_features<'a, T: FeaturesOutput<'a>>(
     for alignment in overlaps.iter() {
         let qid = alignment.overlap.return_other_id(rid);
 
-        let (tshift, qshift) = (0, 0);
+        // let (tshift, qshift) = (0, 0);
 
         //Extract windows
         let is_target = alignment.overlap.tid == rid;
@@ -351,10 +418,10 @@ pub(crate) fn extract_features<'a, T: FeaturesOutput<'a>>(
             &mut windows,
             &alignment.overlap,
             &alignment.cigar,
-            tshift,
-            qshift,
+            // tshift,
+            // qshift,
             is_target,
-            window_size,
+            // window_size,
         );
 
         ovlps_cigar_map.insert(qid, &alignment.cigar);
@@ -363,38 +430,25 @@ pub(crate) fn extract_features<'a, T: FeaturesOutput<'a>>(
 
     feats_output.init(rid, &read.id);
     for i in 0..n_windows {
-        /*if windows[i].len() == 0 {
-            continue;
-        }*/
 
-        let win_len = if i == n_windows - 1 {
-            read.seq.len() - i * window_size as usize
-        } else {
-            window_size as usize
-        };
-
-        // Filter windows
-        windows[i].retain(|ow| {
-            let qid = ow.overlap.return_other_id(rid);
-
-            // TODO: Handle CIGAR offsets
-            let cigar = ovlps_cigar_map.get(&qid).unwrap();
-            //let cigar_end = (ow.cigar_end_idx + 1).min(cigar.len());
-            overlap_window_filter(&cigar[ow.cigar_start_idx..ow.cigar_end_idx])
-        });
+        let win_len = read.seq.len();
 
         // Sort window to take TOP-K
+        // Since there is just one window and for that window all information is in overlap, let not consider window specific variables.
         windows[i].sort_by_key(|ow| {
             let cigar = ovlps_cigar_map
                 .get(&ow.overlap.return_other_id(rid))
                 .unwrap();
 
-            let tstart = ow.tstart as usize;
-            let tend = i * window_size as usize + win_len;
+            let tstart = ow.overlap.tstart as usize;
+            let tend = ow.overlap.tend as usize;
             //reads[rid as usize].seq.get_subseq(tstart..tend, tbuf);
 
             let qid = ow.overlap.return_other_id(rid);
-            let (qstart, qend) = get_query_region(ow, rid);
+            let is_target = ow.overlap.tid == rid;
+            // let (qstart, qend) = get_query_region(ow, rid);
+            let qstart = ow.overlap.qstart as usize;
+            let qend = ow.overlap.qend as usize;
             let qlen = (qend - qstart) as usize;
             match ow.overlap.strand {
                 Strand::Forward => reads[qid as usize]
@@ -404,30 +458,43 @@ pub(crate) fn extract_features<'a, T: FeaturesOutput<'a>>(
                     .seq
                     .get_rc_subseq(qstart as usize..qend as usize, qbuf),
             }
-
-            let acc = calculate_accuracy(ow, cigar, &tbuf[tstart..tend], &qbuf[..qlen]);
+            let acc = 
+                if is_target {
+                    calculate_accuracy(ow, cigar, &tbuf[tstart..tend], &qbuf[..qlen])
+                } else {
+                    calculate_accuracy(ow, cigar, &qbuf[..qlen], &tbuf[tstart..tend])
+                };
             OrderedFloat(-acc)
         });
+
 
         let max_ins = get_max_ins_for_window(
             &windows[i],
             &ovlps_cigar_map,
             rid,
-            i * window_size as usize,
             win_len,
         );
 
-        let (bases, quals) = get_features_for_window(
+        let (full_bases, full_quals) = get_features_for_window(
             &mut windows[i],
             &ovlps_cigar_map,
             rid,
             reads,
             &max_ins,
-            i * window_size as usize,
             win_len,
             tbuf,
             qbuf,
         );
+
+        let full_bases_t = full_bases.t().to_owned();
+        let full_quals_t = full_quals.t().to_owned();
+        // let (bases_t, quals_t) = filter_rows_heuristic_three(&full_bases_t, &full_quals_t);
+        // let bases = bases_t.t().to_owned();
+        // let quals = quals_t.t().to_owned();
+
+        let bases = full_bases.to_owned();
+        let quals = full_quals.to_owned();
+
 
         let qids: Vec<&str> = windows[i]
             .iter()
@@ -436,6 +503,7 @@ pub(crate) fn extract_features<'a, T: FeaturesOutput<'a>>(
             })
             .collect();
 
+        // let (supported, weakly_supported) = get_supported(&bases, &quals, module);
         let supported = get_supported(&bases, module);
 
 
@@ -457,36 +525,15 @@ pub(crate) fn extract_features<'a, T: FeaturesOutput<'a>>(
     feats_output.emit();
 }
 
+
+
 fn calculate_accuracy(window: &OverlapWindow, cigar: &[u8], tseq: &[u8], qseq: &[u8]) -> f32 {
     let (mut tpos, mut qpos) = (0, 0);
     let (mut m, mut s, mut i, mut d) = (0, 0, 0, 0);
 
-    let cigar_iter = CigarIter::new(&cigar[window.cigar_start_idx..window.cigar_end_idx]);
+    let cigar_iter = CigarIter::new(&cigar);
     for (op, range) in cigar_iter {
-        let len = if (0..window.cigar_end_idx - window.cigar_start_idx) == range {
-            assert!(
-                window.cigar_end_offset > window.cigar_start_offset,
-                "{}, {}",
-                window.cigar_start_idx,
-                window.cigar_end_idx
-            );
-            (window.cigar_end_offset - window.cigar_start_offset) as usize
-        } else if range.start == 0 {
-            assert!(
-                op.get_length() > window.cigar_start_offset,
-                "{}, {}, {}, op range{:?}, window range {:?}",
-                window.cigar_start_offset,
-                op.get_length(),
-                std::str::from_utf8(cigar).unwrap(),
-                range,
-                window.cigar_start_idx..window.cigar_end_idx
-            );
-            (op.get_length() - window.cigar_start_offset) as usize
-        } else if range.end == window.cigar_end_idx - window.cigar_start_idx {
-            window.cigar_end_offset as usize
-        } else {
-            op.get_length() as usize
-        };
+        let len = op.get_length() as usize;
 
         assert!(len > 0, "Operation length cannot be 0");
 
@@ -556,6 +603,7 @@ fn calculate_accuracy(window: &OverlapWindow, cigar: &[u8], tseq: &[u8], qseq: &
     (m as f32) / ((m + s + i + d) as f32)
 
 }
+
 
 
 fn get_supported<S>(bases: &ArrayBase<S, Ix2>, module: &str) -> Vec<SupportedPos>
