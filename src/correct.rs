@@ -490,7 +490,7 @@ fn get_target_indices<S: Data<Elem = u8>>(bases: &ArrayBase<S, Ix2>) -> Vec<usiz
 pub(crate) struct WindowExample {
     rid: u32,
     wid: u16,
-    n_alns: u8,
+    n_alns: u16,
     bases: Array2<u8>,
     quals: Array2<u8>,
     qids: Vec<u32>,
@@ -502,7 +502,7 @@ impl WindowExample {
     pub(crate) fn new(
         rid: u32,
         wid: u16,
-        n_alns: u8,
+        n_alns: u16,
         bases: Array2<u8>,
         quals: Array2<u8>,
         qids: Vec<u32>,

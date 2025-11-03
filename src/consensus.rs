@@ -21,7 +21,7 @@ const BASES_UPPER_COUNTER: [usize; 10] = [0, 1, 2, 3, 4, 0, 1, 2, 3, 4];
 pub(crate) struct ConsensusWindow {
     pub(crate) rid: u32,
     pub(crate) wid: u16,
-    pub(crate) n_alns: u8,
+    pub(crate) n_alns: u16,
     pub(crate) n_total_wins: u16,
     pub(crate) bases: Array2<u8>,
     pub(crate) quals: Array2<u8>,
@@ -36,7 +36,7 @@ impl ConsensusWindow {
     pub(crate) fn new(
         rid: u32,
         wid: u16,
-        n_alns: u8,
+        n_alns: u16,
         n_total_wins: u16,
         bases: Array2<u8>,
         quals: Array2<u8>,
