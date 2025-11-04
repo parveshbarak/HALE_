@@ -39,6 +39,104 @@ const BASE_FORWARD: [u8; 128] = [
     255, 255, 84, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
 ];
 
+const ALIGNMENT_LEN_TH:usize = 4000;
+
+
+
+// Heuristics to filter rows from based on alignment accuracy
+// Heuristic 3:
+    // The core idea of Heuristic Three is to limit the column-wise coverage of non-gap bases, ensuring that at no position (col), 
+    // the number of aligned (non-gap) segments passing through it exceeds a threshold (top_k = 20).
+        // It processes rows sequentially and maintains a running coverage count for each column.
+        // For each new row, it attempts to include the row, or portions of it, only if doing so doesn't push the column coverage above top_k.
+        // If including a segment would violate the coverage constraint, that segment is "chopped" (excluded), and the function looks for subsequent, valid segments in the same row.
+        // Valid segments are those that can be included without exceeding the top_k coverage limit and are at least ALIGNMENT_LEN_TH bases long.
+        // The final output arrays, filtered_bases and filtered_quals, contain the selected and chopped segments, 
+        // where excluded regions (or non-selected columns) are filled with the gap character (b'.').
+fn filter_rows_heuristic_three(bases: &Array2<u8>, quals: &Array2<u8>) -> (Array2<u8>, Array2<u8>) {
+    let top_k = 20;
+    let ncols = bases.ncols();
+    let mut coverage = vec![0usize; ncols];
+
+    let mut filtered_rows = Vec::new();
+    filtered_rows.push((0, 0, ncols-1));
+    // iterate over rows
+    for row in 1..bases.nrows() {
+        let mut is_chop = false;
+        // create a vector to store <start,end index pairs> in each row where coverage const are not violated
+        let mut valid_ranges = Vec::new();
+        let mut start_idx = 0;
+        let mut end_idx = 0;
+        let mut no_chop_start = 0;
+        let mut no_chop_end = ncols-1;
+        let mut first_non_gap_found = false;
+        {
+            let row_view = bases.row(row);
+            for (col, &val) in row_view.iter().enumerate() {
+                if val != b'.' {
+                    if !first_non_gap_found {
+                        first_non_gap_found = true;
+                        no_chop_start = col;
+                        start_idx = col;
+                        end_idx = col;
+                    }
+                    if coverage[col] + 1 > top_k {
+                        is_chop = true;
+                        if end_idx - start_idx >= ALIGNMENT_LEN_TH {
+                            valid_ranges.push((start_idx, end_idx-1));
+                        }
+                        start_idx = col + 1;
+                    }
+                    end_idx += 1;
+                } else {
+                    if first_non_gap_found {
+                        no_chop_end = col - 1;
+                        break;
+                    }
+                }
+            }
+            if !is_chop {
+                filtered_rows.push((row, no_chop_start, no_chop_end)); // keep the whole row
+                // add 1 to all indices in range
+                for i in no_chop_start..=no_chop_end {
+                    coverage[i] += 1;
+                }
+            } else if is_chop && valid_ranges.len() > 0 {
+                for (start, end) in valid_ranges {
+                    filtered_rows.push((row, start, end));
+                    for i in start..=end {
+                        coverage[i] += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    let mut filtered_bases = Array2::zeros((filtered_rows.len(), ncols));
+    let mut filtered_quals = Array2::zeros((filtered_rows.len(), ncols));
+    let mut row_idx = 0;
+    for (row, start, end) in filtered_rows {
+        for col in 0..ncols {
+            if col >= start && col <= end {
+                filtered_bases[(row_idx, col)] = bases[(row, col)];
+                filtered_quals[(row_idx, col)] = quals[(row, col)];
+            } else {
+                filtered_bases[(row_idx, col)] = b'.';
+            }
+        }
+        row_idx += 1;
+    }
+
+    (filtered_bases, filtered_quals)
+}
+
+
+
+
+
+
+
+
 fn get_max_ins_for_window(
     overlaps: &[OverlapWindow], // Sorted overlaps
     ovlps_cigar_map: &HashMap<u32, &Vec<u8>>,
@@ -488,12 +586,12 @@ pub(crate) fn extract_features<'a, T: FeaturesOutput<'a>>(
 
         let full_bases_t = full_bases.t().to_owned();
         let full_quals_t = full_quals.t().to_owned();
-        // let (bases_t, quals_t) = filter_rows_heuristic_three(&full_bases_t, &full_quals_t);
-        // let bases = bases_t.t().to_owned();
-        // let quals = quals_t.t().to_owned();
+        let (bases_t, quals_t) = filter_rows_heuristic_three(&full_bases_t, &full_quals_t);
+        let bases = bases_t.t().to_owned();
+        let quals = quals_t.t().to_owned();
 
-        let bases = full_bases.to_owned();
-        let quals = full_quals.to_owned();
+        // let bases = full_bases.to_owned();
+        // let quals = full_quals.to_owned();
 
 
         let qids: Vec<&str> = windows[i]

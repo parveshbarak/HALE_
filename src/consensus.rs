@@ -1,4 +1,5 @@
 use ndarray::Array2;
+use std::cmp::min;
 
 use std::{cmp::Reverse, collections::BinaryHeap};
 
@@ -92,7 +93,7 @@ fn consensus(data: ConsensusData, counts: &mut [u8]) -> Option<Vec<Vec<u8>>> {
     let minmax = data
         .iter()
         .enumerate()
-        .filter_map(|(idx, win)| if win.n_alns > 1 { Some(idx) } else { None })
+        .filter_map(|(idx, win)| if win.bases.ncols() > 2 { Some(idx) } else { None })
         .minmax();
     let (wid_st, wid_en) = match minmax {
         NoElements => {
@@ -110,7 +111,7 @@ fn consensus(data: ConsensusData, counts: &mut [u8]) -> Option<Vec<Vec<u8>>> {
             corrected.extend(&uncorrected[start..end]);
             continue;
         }*/
-        if window.n_alns < 2 {
+        if window.bases.ncols() < 3 {
             if corrected.len() > 0 {
                 corrected_seqs.push(corrected);
                 corrected = Vec::new();
@@ -121,7 +122,7 @@ fn consensus(data: ConsensusData, counts: &mut [u8]) -> Option<Vec<Vec<u8>>> {
 
         // Don't analyze empty rows: LxR -> LxN
         //let n_rows = (window.n_alns + 1).min(TOP_K + 1);
-        let n_rows = window.n_alns + 1;
+        let n_rows = window.bases.ncols() as u16;
         let bases = window.bases.slice(s![.., ..n_rows as usize]);
         let maybe_info = match window.supported.len() {
             0 => HashMap::default(),

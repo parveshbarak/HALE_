@@ -69,7 +69,7 @@ fn mec_modified(data: &mut ConsensusData, module: &str) -> Option<Vec<u8>> {
     let minmax = data
         .iter()
         .enumerate()
-        .filter_map(|(idx, win)| if win.n_alns > 1 { Some(idx) } else { None })
+        .filter_map(|(idx, win)| if win.bases.ncols() > 2 { Some(idx) } else { None })
         .minmax();
     let (wid_st, wid_en) = match minmax {
         NoElements => {
@@ -80,12 +80,12 @@ fn mec_modified(data: &mut ConsensusData, module: &str) -> Option<Vec<u8>> {
     };
     
     for window in data[wid_st..wid_en].iter_mut() {
-        if window.n_alns < 5 || module == "consensus" {
+        if window.bases.ncols() < 7 || module == "consensus" {
             window.bases_logits = Some(Vec::new());
             window.info_logits = Some(Vec::new());
             continue;
         }
-        let n_rows = window.n_alns + 1;
+        let n_rows = window.bases.ncols();
 
         let bases = window.bases.slice(s![.., ..n_rows as usize]).to_owned();
         let informative_bases = filter_bases(&bases, &window.supported);
