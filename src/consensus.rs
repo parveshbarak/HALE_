@@ -1,4 +1,5 @@
 use ndarray::Array2;
+use std::cmp::min;
 
 use std::{cmp::Reverse, collections::BinaryHeap};
 
@@ -121,7 +122,7 @@ fn consensus(data: ConsensusData, counts: &mut [u8]) -> Option<Vec<Vec<u8>>> {
 
         // Don't analyze empty rows: LxR -> LxN
         //let n_rows = (window.n_alns + 1).min(TOP_K + 1);
-        let n_rows = window.n_alns + 1;
+        let n_rows = min(window.n_alns + 1, window.bases.ncols() as u8);
         let bases = window.bases.slice(s![.., ..n_rows as usize]);
         let maybe_info = match window.supported.len() {
             0 => HashMap::default(),
