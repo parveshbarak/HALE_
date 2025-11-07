@@ -35,6 +35,7 @@ mod mm2;
 mod overlaps;
 mod pbars;
 mod windowing;
+mod hale_updated;
 
 pub(crate) const READS_BATCH_SIZE: usize = 50_000;
 pub(crate) const ALN_CHANNEL_CAPACITY: usize = 50_000;

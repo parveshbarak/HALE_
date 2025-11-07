@@ -10,6 +10,7 @@ use rand::Rng;
 use crate::{
     consensus::{ConsensusData, ConsensusWindow},
     features::SupportedPos,
+    hale_updated::hale_updated,
 };
 
 pub(crate) const BASES_MAP: [u8; 128] = [
@@ -94,7 +95,8 @@ fn mec_modified(data: &mut ConsensusData, module: &str) -> Option<Vec<u8>> {
 
         let correction = if module == "hale" {
             // naive_modified_mec(&transposed)
-            naive_modified_mec_weighted(&transposed)
+            // naive_modified_mec_weighted(&transposed)
+            hale_updated(&transposed)
         } else if module == "pih" {
             // pih: passive informative handling
             let row0 = transposed.row(0);
