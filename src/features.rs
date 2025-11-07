@@ -729,14 +729,16 @@ where
 
         counter.iter_mut().for_each(|(_, c)| *c = 0);
         col.iter().for_each(|&b| {
-
+            if b == b'.' {
+                return;
+            }
             *counter.get_mut(&BASE_FORWARD[b as usize]).unwrap() += 1;
         });
 
         let n_supported = counter
             .iter()
             .fold(0u8, |acc, (_, &c)| if c >= 3 { acc + 1 } else { acc });
-        if module != "consensus" && n_supported >= 2 {
+        if n_supported >= 2 {
             supporeted.push(SupportedPos::new(tpos as u16, ins));
         }
     }
