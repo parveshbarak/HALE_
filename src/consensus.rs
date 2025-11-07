@@ -16,6 +16,8 @@ use crate::correct::BASES_MAP;
 
 const BASES_UPPER: [u8; 10] = [b'A', b'C', b'G', b'T', b'*', b'A', b'C', b'G', b'T', b'*'];
 const BASES_UPPER_COUNTER: [usize; 10] = [0, 1, 2, 3, 4, 0, 1, 2, 3, 4];
+const BASES_EXTENDED: [u8; 11] = [b'A', b'C', b'G', b'T', b'*', b'A', b'C', b'G', b'T', b'*', b'.'];
+
 
 // Bases, tidx, supported, logits
 #[derive(Debug)]
@@ -89,6 +91,8 @@ where
 fn consensus(data: ConsensusData, counts: &mut [u8]) -> Option<Vec<Vec<u8>>> {
     let mut corrected_seqs = Vec::new();
     let mut corrected: Vec<u8> = Vec::new();
+    let mut corrected_with_: Vec<u8> = Vec::new();
+    let mut un_corrected_with_: Vec<u8> = Vec::new();
 
     let minmax = data
         .iter()
@@ -137,6 +141,7 @@ fn consensus(data: ConsensusData, counts: &mut [u8]) -> Option<Vec<Vec<u8>>> {
 
         let (mut pos, mut ins) = (-1i32, 0);
         for col in bases.axis_iter(Axis(0)) {
+            un_corrected_with_.push(BASES_UPPER[col[0] as usize]);
             if col[0] == BASES_MAP[b'*' as usize] {
                 ins += 1;
             } else {
@@ -158,6 +163,7 @@ fn consensus(data: ConsensusData, counts: &mut [u8]) -> Option<Vec<Vec<u8>>> {
                 if base != b'*' {
                     corrected.push(base);
                 }
+                corrected_with_.push(base)
             } else {
                 // Count bases
                 counts.iter_mut().for_each(|c| *c = 0);
@@ -198,13 +204,80 @@ fn consensus(data: ConsensusData, counts: &mut [u8]) -> Option<Vec<Vec<u8>>> {
                 if base != b'*' {
                     corrected.push(base);
                 }
+                corrected_with_.push(base)
             }
         }
     }
 
+    // if corrected.len() > 0 {
+    //     corrected_seqs.push(corrected);
+    // }
+
+
+
+    // if corrected.len() > 0 {
+    //     let mut combined: Vec<u8> = Vec::new();
+    //     combined.extend_from_slice(&corrected);
+    //     combined.extend_from_slice(&[b'N'; 4]);  // 4Ns
+    //     combined.extend_from_slice(&corrected_with_);
+    //     combined.extend_from_slice(&[b'N'; 8]);  // 8Ns
+    //     combined.extend_from_slice(&un_corrected_with_);
+    //     combined.extend_from_slice(&[b'N'; 12]);  // 12Ns
+
+    //     let n_rows = data[0].bases.ncols() as u16;
+    //     let bases = data[0].bases.slice(s![.., ..n_rows as usize]);
+    //     for col in bases.axis_iter(Axis(1)) {
+    //         let col_vec: Vec<u8> = col
+    //             .iter()
+    //             .map(|&b| *BASES_EXTENDED.get(b as usize).unwrap_or(&b'N'))
+    //             .collect();
+    //         combined.extend(&col_vec);
+    //         combined.extend_from_slice(&[b'N'; 2]);
+    //     }
+    //     combined.extend_from_slice(&[b'N'; 16]);  // 16Ns
+
+    //     let supported = &data[0].supported;
+    //     for sp in supported {
+    //         // each digit of the pos and ins is saved as an ascii
+    //         combined.extend(sp.pos.to_string().bytes());
+    //         combined.push(b'N');
+    //         combined.extend(sp.ins.to_string().bytes());
+    //         combined.extend_from_slice(&[b'N'; 2]);
+    //     }
+    //     combined.extend_from_slice(&[b'N'; 20]);  // 20Ns
+
+
+    //     let bases_logits_vec: &Vec<u8> = data[0].bases_logits.as_ref().unwrap();
+    //     let mapped_bases: Vec<u8> = bases_logits_vec
+    //         .iter()
+    //         .map(|&b| *BASES_EXTENDED.get(b as usize).unwrap_or(&b'N'))
+    //         .collect();
+    //     combined.extend(mapped_bases);
+    //     combined.extend_from_slice(&[b'N'; 28]);  // 28Ns
+
+    
+    //     corrected_seqs.push(combined);
+    // }
+
+
+
+
     if corrected.len() > 0 {
-        corrected_seqs.push(corrected);
+        let mut combined: Vec<u8> = Vec::new();
+
+        let supported = &data[0].supported;
+        for sp in supported {
+            // each digit of the pos and ins is saved as an ascii
+            combined.extend(sp.pos.to_string().bytes());
+            combined.push(b'N');
+            combined.extend(sp.ins.to_string().bytes());
+            combined.extend_from_slice(&[b'N'; 2]);
+        }
+
+        corrected_seqs.push(combined);
     }
+
+
 
     Some(corrected_seqs)
 }

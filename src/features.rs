@@ -727,14 +727,8 @@ where
             ins = 0;
         }
 
-        let mut has_dot = false;
-
         counter.iter_mut().for_each(|(_, c)| *c = 0);
         col.iter().for_each(|&b| {
-            if b == b'.' {
-                has_dot = true;
-                return;
-            }
 
             *counter.get_mut(&BASE_FORWARD[b as usize]).unwrap() += 1;
         });
@@ -742,7 +736,7 @@ where
         let n_supported = counter
             .iter()
             .fold(0u8, |acc, (_, &c)| if c >= 3 { acc + 1 } else { acc });
-        if !has_dot && module != "consensus" && n_supported >= 2 {
+        if module != "consensus" && n_supported >= 2 {
             supporeted.push(SupportedPos::new(tpos as u16, ins));
         }
     }
