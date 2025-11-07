@@ -1,5 +1,4 @@
 use ndarray::Array2;
-use std::cmp::min;
 
 use std::{cmp::Reverse, collections::BinaryHeap};
 
