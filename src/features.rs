@@ -733,9 +733,9 @@ where
                 return;
             }
 
-            // if b == b'*' || b == b'#' {
-            //     return; // skip indels
-            // }
+            if b == b'*' || b == b'#' {
+                return; // skip indels
+            }
 
             *counter.get_mut(&BASE_FORWARD[b as usize]).unwrap() += 1;
         });
