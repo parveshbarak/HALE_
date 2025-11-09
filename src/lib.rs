@@ -2,6 +2,7 @@
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use features::extract_features;
 use haec_io::HAECRecord;
+use std::collections::HashMap;
 
 use pbars::{
     get_parse_reads_spinner, set_parse_reads_spinner_finish, track_progress, PBarNotification,
@@ -36,6 +37,8 @@ mod overlaps;
 mod pbars;
 mod windowing;
 mod hale_updated;
+mod het_sites_map;
+use het_sites_map::{init_het_sites_map, HET_SITES_MAP};
 
 pub(crate) const READS_BATCH_SIZE: usize = 50_000;
 pub(crate) const ALN_CHANNEL_CAPACITY: usize = 50_000;
@@ -69,6 +72,24 @@ pub fn error_correction<T, U, V>(
     let (core, neighbour) = read_cluster(&cluster_path);
     let mut reads = parse_reads(&reads_path, window_size, &core, &neighbour);
     let max_len = reads.iter().map(|r| r.seq.len()).max().unwrap();
+    
+    // println!("reads total: {:#?}", reads);
+    
+    let name_to_id: HashMap<String, u32> = reads
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let id_str = std::str::from_utf8(&e.id)
+                .expect("Read ID not valid UTF-8")
+                .to_string();
+            (id_str, i as u32)
+        })
+        .collect();
+
+    // println!("name to id: {:?}", name_to_id.get("05ade4ef-5b7d-41f2-a732-214091add44e"));
+    
+
+    let het_map = init_het_sites_map("/home/parvesh/atcg/error_correction2/tools/check_inf_sites/hetsites_on_reads.csv", &name_to_id);
 
     let (alns_sender, alns_receiver) = bounded(ALN_CHANNEL_CAPACITY);
     let (writer_sender, writer_receiver) = unbounded();
