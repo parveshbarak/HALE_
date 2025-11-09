@@ -602,7 +602,7 @@ pub(crate) fn extract_features<'a, T: FeaturesOutput<'a>>(
             .collect();
 
         // let (supported, weakly_supported) = get_supported(&bases, &quals, module);
-        let supported = get_supported(&bases, module);
+        let supported = get_supported(&full_bases, module);
 
 
 
@@ -742,7 +742,7 @@ where
 
         let n_supported = counter
             .iter()
-            .fold(0u8, |acc, (_, &c)| if c >= 3 { acc + 1 } else { acc });
+            .fold(0u8, |acc, (_, &c)| if c >= 20 { acc + 1 } else { acc });
         if module != "consensus" && n_supported >= 2 {
             supporeted.push(SupportedPos::new(tpos as u16, ins));
         }
