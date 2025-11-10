@@ -70,6 +70,184 @@ fn get_column_wise_row_indices(bases: &Array2<u8>, bases_with_col_indices: &mut 
 }
 
 
+
+
+fn get_col_weight(bases: &Array2<u8>) -> Vec<f32> {
+    let n = bases.nrows();
+    let m = bases.ncols();
+    let mut weights = vec![1f32; m];
+
+    let mut base_counts = [0u32; 5]; // [A, C, G, T, D]
+    for i in 0..m {
+        base_counts.fill(0);
+
+        for j in 0..n {
+            let base = bases[[j, i]];
+            if base == BASES_MAP[b'.' as usize] {
+                continue;
+            }
+            match base {
+                x if x == BASES_MAP[b'A' as usize] || x == BASES_MAP[b'a' as usize] => base_counts[0] += 1,
+                x if x == BASES_MAP[b'C' as usize] || x == BASES_MAP[b'c' as usize] => base_counts[1] += 1,
+                x if x == BASES_MAP[b'G' as usize] || x == BASES_MAP[b'g' as usize] => base_counts[2] += 1,
+                x if x == BASES_MAP[b'T' as usize] || x == BASES_MAP[b't' as usize] => base_counts[3] += 1,
+                x if x == BASES_MAP[b'*' as usize] || x == BASES_MAP[b'#' as usize] => base_counts[4] += 1,
+                _ => (),
+            }
+        }
+
+        let mut counts = base_counts.clone();
+        counts.sort_unstable_by(|a, b| b.cmp(a));
+        let max_base = counts[0];
+        let second_max = counts[1];
+        // if max_base - second_max < 5 {
+        //     weights[i] = 4 as f32;
+        // } else if max_base - second_max < 10 {
+        //     weights[i] = 2 as f32;
+        // } else {
+        //     weights[i] = 1 as f32;
+        // }
+
+        weights[i] = 1 as f32;
+
+        if base_counts[4]==max_base || base_counts[4]==second_max {
+            weights[i] = 0.1 as f32;
+        }
+
+        // if base_counts[4]==max_base || bases[[0,i]] == BASES_MAP[b'*' as usize] || bases[[0,i]] == BASES_MAP[b'#' as usize] {
+        //     weights[i] = 0.1 as f32;
+        // }
+
+        // weights[i] = ((max_base + second_max) as f32)/ ((max_base - second_max + 1) as f32);
+
+    }
+
+    weights
+}
+
+
+
+
+fn get_next_partition_cost_weighted(bitmask: u32, col: usize, bases: &Array2<u8>, bases_with_col_indices: &Array2<u32>, prev_bitmask: u32, base_counts: &mut [u32; 5], weights: &Vec<f32>) -> f32 {
+    let n = bases.nrows();
+    let set_bits = bitmask.count_ones() as usize;
+    let bit_changed = bitmask ^ prev_bitmask;
+    let idx = ilog2(bit_changed) + 1;
+    let index = bases_with_col_indices[[idx,col]] as usize;
+
+    // println!("base_counts: {:?}, set_bits: {}, col: {}, bitmask: {}, previous_bitmask: {}, idx: {}, index: {}", base_counts, set_bits, col, bitmask, prev_bitmask, idx, index);
+
+    let base = bases[[index,col]];
+    if bitmask&bit_changed == 0 {
+        match base {
+            x if x == BASES_MAP[b'A' as usize] || x == BASES_MAP[b'a' as usize] => base_counts[0] -= 1,
+            x if x == BASES_MAP[b'C' as usize] || x == BASES_MAP[b'c' as usize] => base_counts[1] -= 1,
+            x if x == BASES_MAP[b'G' as usize] || x == BASES_MAP[b'g' as usize] => base_counts[2] -= 1,
+            x if x == BASES_MAP[b'T' as usize] || x == BASES_MAP[b't' as usize] => base_counts[3] -= 1,
+            x if x == BASES_MAP[b'*' as usize] || x == BASES_MAP[b'#' as usize] => base_counts[4] -= 1,
+            _ => (),
+        }
+    } else {
+        match base {
+            x if x == BASES_MAP[b'A' as usize] || x == BASES_MAP[b'a' as usize] => base_counts[0] += 1,
+            x if x == BASES_MAP[b'C' as usize] || x == BASES_MAP[b'c' as usize] => base_counts[1] += 1,
+            x if x == BASES_MAP[b'G' as usize] || x == BASES_MAP[b'g' as usize] => base_counts[2] += 1,
+            x if x == BASES_MAP[b'T' as usize] || x == BASES_MAP[b't' as usize] => base_counts[3] += 1,
+            x if x == BASES_MAP[b'*' as usize] || x == BASES_MAP[b'#' as usize] => base_counts[4] += 1,
+            _ => (),
+        }
+    }
+    let max_count = base_counts.iter().copied().max().unwrap_or(0) as usize;
+    // println!("base_counts: {:?}, max_count: {}, set_bits: {}", base_counts, max_count, set_bits);
+    (set_bits + 1 - max_count) as f32 * weights[col]
+
+}
+
+
+
+// function to get cost of a partition
+fn get_first_partition_cost_weighted(bitmask: u32, col: usize, bases: &Array2<u8>, base_counts: &mut [u32; 5], weights: &Vec<f32>) -> f32 {
+    let n = bases.nrows();
+    let set_bits = bitmask.count_ones() as usize;
+    // if set_bits < 6  {
+    //     return u32::MAX as usize;
+    // }
+    // iterate over rows in col column of bases and count freq of b'A', b'C', b'T', b'G', b'*', b'a', b'c', b't', b'g', b'#'
+    // let mut base_counts = [0u32; 5]; // [A, C, G, T, D]
+    let mut row_count:u32 = 0;
+    for row in 0..n {
+        let base = bases[[row, col]];
+        if base == BASES_MAP[b'.' as usize] {
+            continue;
+        }
+        if (row > 0) && (bitmask & (1 << row_count)) == 0 {
+            row_count += 1;
+            continue; // skip rows that are not in the partition
+        }
+        match base {
+            x if x == BASES_MAP[b'A' as usize] || x == BASES_MAP[b'a' as usize] => base_counts[0] += 1,
+            x if x == BASES_MAP[b'C' as usize] || x == BASES_MAP[b'c' as usize] => base_counts[1] += 1,
+            x if x == BASES_MAP[b'G' as usize] || x == BASES_MAP[b'g' as usize] => base_counts[2] += 1,
+            x if x == BASES_MAP[b'T' as usize] || x == BASES_MAP[b't' as usize] => base_counts[3] += 1,
+            x if x == BASES_MAP[b'*' as usize] || x == BASES_MAP[b'#' as usize] => base_counts[4] += 1,
+            _ => (),
+        }
+
+        if row > 0 {
+            row_count += 1;
+        }
+    }
+    let max_count = base_counts.iter().copied().max().unwrap_or(0) as usize;
+    // println!("base_counts: {:?}, max_count: {}, set_bits: {}, col: {}", base_counts, max_count, set_bits, col);
+    (set_bits + 1 - max_count) as f32 * weights[col]
+
+}
+
+
+
+// function to get cost of a partition
+fn get_partition_cost_weighted(bitmask: u32, col: usize, bases: &Array2<u8>, weights: &Vec<f32>) -> f32 {
+    let n = bases.nrows();
+    let set_bits = bitmask.count_ones() as usize;
+    if set_bits < MIN_K_TH as usize  {
+        return u32::MAX as f32;
+    }
+    // iterate over rows in col column of bases and count freq of b'A', b'C', b'T', b'G', b'*', b'a', b'c', b't', b'g', b'#'
+    let mut base_counts = [0u32; 5]; // [A, C, G, T, D]
+    let mut row_count:u32 = 0;
+    for row in 0..n {
+        let base = bases[[row, col]];
+        if base == BASES_MAP[b'.' as usize] {
+            continue;
+        }
+        if (row > 0) && (bitmask & (1 << row_count)) == 0 {
+            row_count += 1;
+            continue; // skip rows that are not in the partition
+        }
+        match base {
+            x if x == BASES_MAP[b'A' as usize] || x == BASES_MAP[b'a' as usize] => base_counts[0] += 1,
+            x if x == BASES_MAP[b'C' as usize] || x == BASES_MAP[b'c' as usize] => base_counts[1] += 1,
+            x if x == BASES_MAP[b'G' as usize] || x == BASES_MAP[b'g' as usize] => base_counts[2] += 1,
+            x if x == BASES_MAP[b'T' as usize] || x == BASES_MAP[b't' as usize] => base_counts[3] += 1,
+            x if x == BASES_MAP[b'*' as usize] || x == BASES_MAP[b'#' as usize] => base_counts[4] += 1,
+            _ => (),
+        }
+
+        if row > 0 {
+            row_count += 1;
+        }
+    }
+    let max_count = base_counts.iter().copied().max().unwrap_or(0) as usize;
+    // println!("base_counts: {:?}, max_count: {}, col: {}", base_counts, max_count, col);
+    (set_bits + 1 - max_count) as f32 * weights[col]
+
+}
+
+
+
+
+
+
 fn get_next_partition_cost(bitmask: u32, col: usize, bases: &Array2<u8>, bases_with_col_indices: &Array2<u32>, prev_bitmask: u32, base_counts: &mut [u32; 5]) -> usize {
     let n = bases.nrows();
     let set_bits = bitmask.count_ones() as usize;
@@ -214,12 +392,12 @@ fn get_common_and_diff_rows(prev_col: usize, col: usize, bases: &Array2<u8>) -> 
 }
 
 
-fn backtrack(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut Array2<usize>, partition: &mut Vec<u8>) {
+fn backtrack(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut Array2<f32>, partition: &mut Vec<u8>) {
     let m = bases.ncols();
     let n = bases.nrows();
 
     let total_bits = row_counts[m-1] as u32;
-    let mut min_cost: usize = u32::MAX as usize;
+    let mut min_cost: f32 = u32::MAX as f32;
     let mut corr_mask: u32 = 0;
     for bitmask in 0..(1 << total_bits) {
         if dp[[m-1, bitmask as usize]] < min_cost {
@@ -228,9 +406,12 @@ fn backtrack(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut Array2<usize>
         }
     }
 
+    let weights = get_col_weight(bases);
+
     // println!("mincost_left: {}, bitmask: {:b}", min_cost, corr_mask);
 
-    let mut corr_mask_cost = get_partition_cost(corr_mask, m-1, &bases);
+    // let mut corr_mask_cost = get_partition_cost(corr_mask, m-1, &bases);
+    let mut corr_mask_cost = get_partition_cost_weighted(corr_mask, m-1, &bases, &weights);
 
     // println!("corr_mask: {:b}, corr_mask_cost: {}, min_cost: {}", corr_mask, corr_mask_cost, min_cost);
 
@@ -284,7 +465,8 @@ fn backtrack(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut Array2<usize>
             if cost_c + corr_mask_cost == min_cost {
                 corr_mask = temp;
                 min_cost = cost_c;
-                corr_mask_cost = get_partition_cost(corr_mask, col, &bases);
+                // corr_mask_cost = get_partition_cost(corr_mask, col, &bases);
+                corr_mask_cost = get_partition_cost_weighted(corr_mask, col, &bases, &weights);
                 break;
             }
 
@@ -310,23 +492,26 @@ fn backtrack(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut Array2<usize>
 }
 
 
-fn get_dp_for_hale_update(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut Array2<usize>, bases_with_col_indices: &Array2<u32>) {
+fn get_dp_for_hale_update(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut Array2<f32>, bases_with_col_indices: &Array2<u32>) {
     let m = bases.ncols();
 
     // for column 0, we get all those bitmasks that set exactly k bits out of max_count bits
     // For all these columns, we get their cost and set cost of that bitmask in dp[0][bitmask]
-    let mut test_mn = u32::MAX as usize;
+    let mut test_mn = u32::MAX as f32;
     let total_bits = row_counts[0] as u32;
     let mut bitmask = 0 as u32;
     let mut bitmask_binary = 0 as u32;
     let mut base_counts = [0u32; 5];
     let mut previous_bitmask = 0 as u32;
+    let weights = get_col_weight(bases);
     while bitmask_binary < (1 << total_bits) {
         // same as bitmask being 0, which means no bits are set and hence cost will be u32::MAX
         let cost = if previous_bitmask == bitmask  {
-            get_first_partition_cost(bitmask, 0, &bases, &mut base_counts)
+            // get_first_partition_cost(bitmask, 0, &bases, &mut base_counts)
+            get_first_partition_cost_weighted(bitmask, 0, &bases, &mut base_counts, &weights)
         } else {
-            get_next_partition_cost(bitmask, 0, &bases, &bases_with_col_indices, previous_bitmask, &mut base_counts)
+            // get_next_partition_cost(bitmask, 0, &bases, &bases_with_col_indices, previous_bitmask, &mut base_counts)
+            get_next_partition_cost_weighted(bitmask, 0, &bases, &bases_with_col_indices, previous_bitmask, &mut base_counts, &weights)
         };
         //naive
         // let cost = get_partition_cost(bitmask_binary,0,&bases);
@@ -349,7 +534,7 @@ fn get_dp_for_hale_update(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut 
     // Iterate over all columns from 1 to m-1
     // For each column, we iterate over all bitmasks of size 2^(row_counts[col])
     for col in 1..m {
-        test_mn = u32::MAX as usize;
+        test_mn = u32::MAX as f32;
         bitmask = 0;
         bitmask_binary = 0;
         previous_bitmask = 0;
@@ -391,7 +576,7 @@ fn get_dp_for_hale_update(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut 
 
             // now we have prev_col_outer_bitmask, we can iterate over all bitmasks in prev col that are compatible with prev_col_outer_bitmask mask and store the cost of min bitmask
             let mut prev_col_inner_bitmask = prev_col_outer_bitmask;
-            let mut min_cost = u32::MAX as usize;
+            let mut min_cost = u32::MAX as f32;
             let mut temp_bitmask = 0;
             let mut temp_bitmask_binary = 0;
             let mut previous_temp_bitmask = 0;
@@ -442,7 +627,7 @@ fn get_dp_for_hale_update(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut 
             temp_bitmask = 0 as u32;
             previous_temp_bitmask = 0 as u32;
             temp_bitmask_binary = 0;
-            let mut temp_bitmask_cost = 0 as usize;
+            let mut temp_bitmask_cost = 0 as f32;
             let mut base_counts_inner = base_counts_outer.clone();
 
             while temp_bitmask_binary < (1 << curr_col_diff_bits) {
@@ -451,9 +636,11 @@ fn get_dp_for_hale_update(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut 
                     // this is also the cost of curr_Col_outer_bitmask ans will be usefull in next iteration
                     // if bitmask is zero, there is no previous iteration to this, hence we will caluclate the cost of this bitmask naively, which we ofcourse know is u32::MAX, but we also have to update the base_counts
                     temp_bitmask_cost = if bitmask == 0 {
-                        get_first_partition_cost(curr_col_inner_bitmask, col, &bases, &mut base_counts_inner)
+                        // get_first_partition_cost(curr_col_inner_bitmask, col, &bases, &mut base_counts_inner)
+                        get_first_partition_cost_weighted(curr_col_inner_bitmask, col, &bases, &mut base_counts_inner, &weights)
                     } else {
-                        get_next_partition_cost(curr_col_inner_bitmask, col, &bases, &bases_with_col_indices, prev_iter_curr_col_outer_bitmask, &mut base_counts_inner)
+                        // get_next_partition_cost(curr_col_inner_bitmask, col, &bases, &bases_with_col_indices, prev_iter_curr_col_outer_bitmask, &mut base_counts_inner)
+                        get_next_partition_cost_weighted(curr_col_inner_bitmask, col, &bases, &bases_with_col_indices, prev_iter_curr_col_outer_bitmask, &mut base_counts_inner, &weights)
                     };
                     // since this is very first iteration where curr_col_inner_bitmask = curr_col_outer_bitmask, we keep the basecounts after this iteration 
                     // stored in base_counts_outer to be used at start of this loop before next iteration
@@ -467,7 +654,8 @@ fn get_dp_for_hale_update(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut 
                     } else {
                         curr_col_inner_bitmask |= 1 << curr_col_diff_rows[index_changed];
                     }
-                    temp_bitmask_cost = get_next_partition_cost(curr_col_inner_bitmask, col, &bases, bases_with_col_indices, curr_col_inner_bitmask_before_update, &mut base_counts_inner);
+                    // temp_bitmask_cost = get_next_partition_cost(curr_col_inner_bitmask, col, &bases, bases_with_col_indices, curr_col_inner_bitmask_before_update, &mut base_counts_inner);
+                    temp_bitmask_cost = get_next_partition_cost_weighted(curr_col_inner_bitmask, col, &bases, &bases_with_col_indices, curr_col_inner_bitmask_before_update, &mut base_counts_inner, &weights);
                     
                 }
 
@@ -480,10 +668,10 @@ fn get_dp_for_hale_update(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut 
                 // temp_bitmask_cost = get_partition_cost(curr_col_inner_bitmask, col, &bases);
 
                 let set_bits_in_curr_col_inner_bitmask = curr_col_inner_bitmask.count_ones() as usize;
-                dp[[col, curr_col_inner_bitmask as usize]] = if min_cost < u32::MAX as usize && set_bits_in_curr_col_inner_bitmask >= MIN_K_TH as usize {
+                dp[[col, curr_col_inner_bitmask as usize]] = if min_cost < u32::MAX as f32 && set_bits_in_curr_col_inner_bitmask >= MIN_K_TH as usize {
                     min_cost + temp_bitmask_cost
                 } else {
-                    u32::MAX as usize
+                    u32::MAX as f32
                 };
                 test_mn = test_mn.min(dp[[col, curr_col_inner_bitmask as usize]]);
 
@@ -597,7 +785,7 @@ pub fn hale_updated(bases: &Array2<u8>) -> Vec<u8> {
     }
 
     // init a matrix called dp of size m x 2^(max_count) with all values set to infinity
-    let mut dp = Array2::<usize>::from_elem((m, 1 << (max_count) as usize), u32::MAX as usize);
+    let mut dp = Array2::<f32>::from_elem((m, 1 << (max_count) as usize), u32::MAX as f32);
 
     // solve hale update to get the dp table
     get_dp_for_hale_update(&bases, &row_counts, &mut dp, &bases_with_col_indices);
