@@ -2,6 +2,7 @@
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use features::extract_features;
 use haec_io::HAECRecord;
+use spoa::AlignmentEngine;
 
 use pbars::{
     get_parse_reads_spinner, set_parse_reads_spinner_finish, track_progress, PBarNotification,
@@ -105,6 +106,15 @@ pub fn error_correction<T, U, V>(
                 let mut feats_output = CorrectOutput::new(infer_s, batch_size);
                 let mut tbuf = vec![0; max_len];
                 let mut qbuf = vec![0; max_len];
+                let mut aln_engine = AlignmentEngine::new(
+                    spoa::AlignmentType::kNW, // alignment type
+                    2,                        // match score
+                    -4,                       // mismatch penalty
+                    -6,                       // gap open penalty
+                    -2,                       // gap extend penalty
+                    -6,                       // q parameter
+                    -2,                       // c parameter
+                );
 
                 loop {
                     let (rid, alns) = match alns_r.recv() {
@@ -120,6 +130,7 @@ pub fn error_correction<T, U, V>(
                         module,
                         (&mut tbuf, &mut qbuf),
                         &mut feats_output,
+                        &mut aln_engine,
                     );
                 }
             });
