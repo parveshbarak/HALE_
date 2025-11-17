@@ -16,6 +16,7 @@ use crate::correct::{prepare_examples, CorrectData, WindowExample};
 use crate::overlaps::{Alignment, Strand};
 use crate::pbars::PBarNotification;
 use crate::windowing::{extract_windows, OverlapWindow};
+use crate::het_sites_map::HET_SITES_MAP;
 
 pub(crate) const TOP_K: usize = 20;
 
@@ -602,7 +603,8 @@ pub(crate) fn extract_features<'a, T: FeaturesOutput<'a>>(
             .collect();
 
         // let (supported, weakly_supported) = get_supported(&bases, &quals, module);
-        let supported = get_supported(&bases, module);
+        // let supported = get_supported(&bases, module);
+        let supported = get_info_supported(&bases, rid);
 
 
 
@@ -744,6 +746,32 @@ where
     }
 
     supporeted
+}
+
+
+
+
+fn get_info_supported<S>(bases: &ArrayBase<S, Ix2>, rid: u32) -> Vec<SupportedPos>
+where
+    S: Data<Elem = u8>,
+{
+    let mut supported = Vec::new();
+    let het_map = HET_SITES_MAP
+        .get()
+        .expect("HET_SITES_MAP not initialized — call init_het_sites_map first");
+    
+    // let rid_het_map = het_map.get(&rid);
+    // for (pos, _) in rid_het_map {
+    //     supported.push(SupportedPos::new(pos as u16, 0));
+    // }
+
+    if let Some(pos_list) = het_map.get(&rid) {
+        for (pos, _) in pos_list {
+            supported.push(SupportedPos::new(*pos as u16, 0));
+        }
+    }
+
+    supported
 }
 
 

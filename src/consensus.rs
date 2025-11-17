@@ -96,13 +96,13 @@ fn consensus(data: ConsensusData, counts: &mut [u8]) -> Option<Vec<Vec<u8>>> {
     let mut corrected_with_: Vec<u8> = Vec::new();
     let mut un_corrected_with_: Vec<u8> = Vec::new();
 
-    let het_map = HET_SITES_MAP
-        .get()
-        .expect("HET_SITES_MAP not initialized — call init_het_sites_map first");
+    // let het_map = HET_SITES_MAP
+    //     .get()
+    //     .expect("HET_SITES_MAP not initialized — call init_het_sites_map first");
     
-    let rid = data[0].rid;
-    let rid_het_map = het_map.get(&rid);
-    // println!("rid_het_map:{:?}, {:?}", rid, rid_het_map);
+    // let rid = data[0].rid;
+    // let rid_het_map = het_map.get(&rid);
+    // // println!("rid_het_map:{:?}, {:?}", rid, rid_het_map);
 
     let minmax = data
         .iter()
@@ -159,39 +159,39 @@ fn consensus(data: ConsensusData, counts: &mut [u8]) -> Option<Vec<Vec<u8>>> {
                 ins = 0;
             }
 
-            let maybe_base = if ins == 0 {
-                rid_het_map.and_then(|vec| {
-                    vec.iter()
-                        .find(|&&(p, _)| p == pos as u64)
-                        .map(|&(_, b)| b)
-                })
-            } else {
-                None
-            };
-            if let Some(het_base) = maybe_base {
-                let base = het_base as u8; // convert char -> u8
-                if base != b'*' {
-                    corrected.push(base);
-                }
-                corrected_with_.push(base);
-            }
-
-            // if let Some((_, b)) = maybe_info.get(&SupportedPos::new(pos as u16, ins)) {
-            //     // recoganise other bases as well!
-            //     let base = match *b {
-            //         0 => b'A',
-            //         1 => b'C',
-            //         2 => b'G',
-            //         3 => b'T',
-            //         4 => b'*',
-            //         _ => panic!("Unrecognized base"),
-            //     };
-
+            // let maybe_base = if ins == 0 {
+            //     rid_het_map.and_then(|vec| {
+            //         vec.iter()
+            //             .find(|&&(p, _)| p == pos as u64)
+            //             .map(|&(_, b)| b)
+            //     })
+            // } else {
+            //     None
+            // };
+            // if let Some(het_base) = maybe_base {
+            //     let base = het_base as u8; // convert char -> u8
             //     if base != b'*' {
             //         corrected.push(base);
             //     }
-            //     corrected_with_.push(base)
-            // } 
+            //     corrected_with_.push(base);
+            // }
+
+            if let Some((_, b)) = maybe_info.get(&SupportedPos::new(pos as u16, ins)) {
+                // recoganise other bases as well!
+                let base = match *b {
+                    0 => b'A',
+                    1 => b'C',
+                    2 => b'G',
+                    3 => b'T',
+                    4 => b'*',
+                    _ => panic!("Unrecognized base"),
+                };
+
+                if base != b'*' {
+                    corrected.push(base);
+                }
+                corrected_with_.push(base)
+            } 
             else {
                 // Count bases
                 counts.iter_mut().for_each(|c| *c = 0);

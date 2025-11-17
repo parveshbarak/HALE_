@@ -89,7 +89,8 @@ pub fn error_correction<T, U, V>(
     // println!("name to id: {:?}", name_to_id.get("05ade4ef-5b7d-41f2-a732-214091add44e"));
     
 
-    let het_map = init_het_sites_map("/home/parvesh/atcg/error_correction2/tools/check_inf_sites/hetsites_on_reads.csv", &name_to_id);
+    // let het_map = init_het_sites_map("/home/parvesh/atcg/error_correction2/tools/check_inf_sites/hetsites_on_reads.csv", &name_to_id);
+    let het_map = init_het_sites_map("/home/parvesh/atcg/error_correction2/experiments/chr18/ont_60x/experiments_from_scratch/debugging_experiments/filtered_inf_positions.csv", &name_to_id);
 
     let (alns_sender, alns_receiver) = bounded(ALN_CHANNEL_CAPACITY);
     let (writer_sender, writer_receiver) = unbounded();
