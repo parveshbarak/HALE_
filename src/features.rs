@@ -742,7 +742,7 @@ where
 
         let n_supported = counter
             .iter()
-            .fold(0u8, |acc, (_, &c)| if c >= 20 { acc + 1 } else { acc });
+            .fold(0u8, |acc, (_, &c)| if c >= 10 { acc + 1 } else { acc });
         if module != "consensus" && n_supported >= 2 {
             supporeted.push(SupportedPos::new(tpos as u16, ins));
         }

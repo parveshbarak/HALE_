@@ -110,14 +110,14 @@ fn consensus(data: ConsensusData, counts: &mut [u8]) -> Option<Vec<Vec<u8>>> {
             corrected.extend(&uncorrected[start..end]);
             continue;
         }*/
-        if window.bases.ncols() < 3 {
-            if corrected.len() > 0 {
-                corrected_seqs.push(corrected);
-                corrected = Vec::new();
-            }
+        // if window.bases.ncols() < 3 {
+        //     if corrected.len() > 0 {
+        //         corrected_seqs.push(corrected);
+        //         corrected = Vec::new();
+        //     }
 
-            continue;
-        }
+        //     continue;
+        // }
 
         // Don't analyze empty rows: LxR -> LxN
         //let n_rows = (window.n_alns + 1).min(TOP_K + 1);
