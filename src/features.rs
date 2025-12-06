@@ -16,6 +16,7 @@ use crate::correct::{prepare_examples, CorrectData, WindowExample};
 use crate::overlaps::{Alignment, Strand};
 use crate::pbars::PBarNotification;
 use crate::windowing::{extract_windows, OverlapWindow};
+use std::cmp::min;
 
 pub(crate) const TOP_K: usize = 20;
 
@@ -57,6 +58,7 @@ fn filter_rows_heuristic_three(bases: &Array2<u8>, quals: &Array2<u8>) -> (Array
     let top_k = 20;
     let ncols = bases.ncols();
     let mut coverage = vec![0usize; ncols];
+    let target_size_th = bases.nrows()/3;
 
     let mut filtered_rows = Vec::new();
     filtered_rows.push((0, 0, ncols-1));
@@ -82,7 +84,7 @@ fn filter_rows_heuristic_three(bases: &Array2<u8>, quals: &Array2<u8>) -> (Array
                     }
                     if coverage[col] + 1 > top_k {
                         is_chop = true;
-                        if end_idx - start_idx >= ALIGNMENT_LEN_TH {
+                        if end_idx - start_idx >= min(ALIGNMENT_LEN_TH, target_size_th) {
                             valid_ranges.push((start_idx, end_idx-1));
                         }
                         start_idx = col + 1;

@@ -49,11 +49,11 @@ pub(crate) fn extract_windows<'a>(
     is_target: bool,
 ) {
 
-    if (is_target && (overlap.tend - overlap.tstart) < 4000)
-        || ((overlap.qend - overlap.qstart) < 4000)
-    {
-        return;
-    }
+    // if (is_target && (overlap.tend - overlap.tstart) < 4000)
+    //     || ((overlap.qend - overlap.qstart) < 4000)
+    // {
+    //     return;
+    // }
 
     let mut tpos;
     let mut qpos = 0;
