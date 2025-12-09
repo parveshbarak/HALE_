@@ -110,6 +110,9 @@ fn consensus(data: ConsensusData, counts: &mut [u8]) -> Option<Vec<Vec<u8>>> {
             corrected.extend(&uncorrected[start..end]);
             continue;
         }*/
+
+        // println!("{:?}", window.qids);
+
         if window.bases.ncols() < 3 {
             if corrected.len() > 0 {
                 corrected_seqs.push(corrected);

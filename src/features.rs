@@ -53,7 +53,7 @@ const ALIGNMENT_LEN_TH:usize = 4000;
         // Valid segments are those that can be included without exceeding the top_k coverage limit and are at least ALIGNMENT_LEN_TH bases long.
         // The final output arrays, filtered_bases and filtered_quals, contain the selected and chopped segments, 
         // where excluded regions (or non-selected columns) are filled with the gap character (b'.').
-fn filter_rows_heuristic_three(bases: &Array2<u8>, quals: &Array2<u8>) -> (Array2<u8>, Array2<u8>) {
+fn filter_rows_heuristic_three(bases: &Array2<u8>, quals: &Array2<u8>, qids: &Vec<u32>) -> (Array2<u8>, Array2<u8>, Vec<u32>) {
     let top_k = 20;
     let ncols = bases.ncols();
     let mut coverage = vec![0usize; ncols];
@@ -114,6 +114,7 @@ fn filter_rows_heuristic_three(bases: &Array2<u8>, quals: &Array2<u8>) -> (Array
 
     let mut filtered_bases = Array2::zeros((filtered_rows.len(), ncols));
     let mut filtered_quals = Array2::zeros((filtered_rows.len(), ncols));
+    let mut filtered_qids: Vec<u32> = Vec::new();
     let mut row_idx = 0;
     for (row, start, end) in filtered_rows {
         for col in 0..ncols {
@@ -124,10 +125,11 @@ fn filter_rows_heuristic_three(bases: &Array2<u8>, quals: &Array2<u8>) -> (Array
                 filtered_bases[(row_idx, col)] = b'.';
             }
         }
+        filtered_qids.push(qids[row]);
         row_idx += 1;
     }
 
-    (filtered_bases, filtered_quals)
+    (filtered_bases, filtered_quals, filtered_qids)
 }
 
 
@@ -584,9 +586,14 @@ pub(crate) fn extract_features<'a, T: FeaturesOutput<'a>>(
             qbuf,
         );
 
+        let mut qids_test: Vec<u32> = windows[i].iter().map(|ow| ow.overlap.qid).collect();
+        qids_test.insert(0, rid);
+
+        // println!("{:?}, {:?}", qids_test.len(), full_bases.shape());
+
         let full_bases_t = full_bases.t().to_owned();
         let full_quals_t = full_quals.t().to_owned();
-        let (bases_t, quals_t) = filter_rows_heuristic_three(&full_bases_t, &full_quals_t);
+        let (bases_t, quals_t, filtered_qids) = filter_rows_heuristic_three(&full_bases_t, &full_quals_t, &qids_test);
         let bases = bases_t.t().to_owned();
         let quals = quals_t.t().to_owned();
 
@@ -601,19 +608,19 @@ pub(crate) fn extract_features<'a, T: FeaturesOutput<'a>>(
             })
             .collect();
 
+        let s = std::str::from_utf8(&read.id).unwrap();
+        println!("{:?},{:?}",rid,s);
+
         // let (supported, weakly_supported) = get_supported(&bases, &quals, module);
         let supported = get_supported(&full_bases, module);
 
-
-
-        let qids_test: Vec<u32> = windows[i].iter().map(|ow| ow.overlap.qid).collect();
 
         feats_output.update(
             rid,
             i as u16,
             bases,
             quals,
-            qids_test,
+            filtered_qids,
             supported,
             qids,
             n_windows as u16,

@@ -92,11 +92,13 @@ fn mec_modified(data: &mut ConsensusData, module: &str) -> Option<Vec<u8>> {
         let informative_bases = filter_bases(&bases, &window.supported);
         let transposed = informative_bases.t().to_owned();
 
+        // println!("{:?}, {:?}", window.qids.len(), window.bases.shape());
+
 
         let correction = if module == "hale" {
             // naive_modified_mec(&transposed)
             // naive_modified_mec_weighted(&transposed)
-            hale_updated(&transposed)
+            hale_updated(&transposed, &mut window.qids)
         } else if module == "pih" {
             // pih: passive informative handling
             let row0 = transposed.row(0);

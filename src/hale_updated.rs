@@ -745,7 +745,7 @@ fn compute_corrected_seq(bases: &Array2<u8>, partition: &Vec<u8>, corrections: &
 
 
 /// Finds the optimal correction sequence using the best partition
-pub fn hale_updated(bases: &Array2<u8>) -> Vec<u8> {
+pub fn hale_updated(bases: &Array2<u8>, qids: &mut Vec<u32>) -> Vec<u8> {
     let n = bases.nrows();
     let m = bases.ncols();
     // println!("n: {}, m: {}", n, m);
@@ -806,6 +806,16 @@ pub fn hale_updated(bases: &Array2<u8>) -> Vec<u8> {
     compute_corrected_seq(&bases, &partition, &mut corrections);
     // println!{"bases: {:?}", bases};
     // println!{"corrections: {:?}", corrections};
+
+    // println!("{:?}, {:?}", partition.len(), qids.len());
+
+    let mut idx = 0;
+
+    qids.retain(|_| {
+        let keep = partition[idx] == 1;
+        idx += 1;
+        keep
+    });
 
     corrections
 
