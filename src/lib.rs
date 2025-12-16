@@ -88,7 +88,7 @@ pub fn error_correction<T, U, V>(
             );
         });
 
-        s.spawn(|| correction_writer(&reads, output_path, writer_receiver, pbar_sender));
+        s.spawn(|| correction_writer_2(&reads, output_path, writer_receiver, pbar_sender));
 
 
         let (infer_sender, infer_recv) = bounded(INFER_CHANNEL_CAP_FACTOR * num_threads);
@@ -257,3 +257,87 @@ fn write_sequence<W: Write>(
 
     Ok(())
 }
+
+
+
+
+fn split_seq_qual(buf: &[u8]) -> Result<(&[u8], &[u8]), Error> {
+    let pos = buf.iter().position(|&b| b == b'+')
+        .ok_or_else(|| Error::new(std::io::ErrorKind::InvalidData, "Missing '+' separator"))?;
+
+    let (seq, qual) = buf.split_at(pos);
+    let qual = &qual[1..]; // skip '+'
+
+    if seq.len() != qual.len() {
+        return Err(Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Sequence and quality lengths differ",
+        ));
+    }
+
+    Ok((seq, qual))
+}
+
+
+fn correction_writer_2<U: AsRef<Path>>(
+    reads: &[HAECRecord],
+    output_path: U,
+    consensus_recv: Receiver<(usize, Vec<Vec<u8>>)>,
+    pbar_sender: Sender<PBarNotification>,
+) {
+    let file = File::create(output_path).unwrap();
+    let mut writer = BufWriter::new(file);
+
+    loop {
+        let (rid, seqs) = match consensus_recv.recv() {
+            Ok(out) => out,
+            Err(_) => break,
+        };
+    
+        if seqs.len() == 1 {
+            let (seq, qual) = split_seq_qual(&seqs[0]).unwrap();
+            write_sequence_fastq(seq, qual, None, &reads[rid], &mut writer).unwrap();
+        } else {
+            for (i, buf) in seqs.into_iter().enumerate() {
+                let (seq, qual) = split_seq_qual(&buf).unwrap();
+                write_sequence_fastq(seq, qual, Some(i), &reads[rid], &mut writer).unwrap();
+            }
+        }
+    
+        pbar_sender.send(PBarNotification::Inc).unwrap();
+    }
+}
+
+
+fn write_sequence_fastq<W: Write>(
+    seq: &[u8],
+    qual: &[u8],
+    idx: Option<usize>,
+    read: &HAECRecord,
+    writer: &mut W,
+) -> Result<(), Error> {
+    // Header
+    writer.write_all(b"@")?;
+    writer.write_all(&read.id)?;
+
+    match idx {
+        Some(idx) => write!(writer, ":{} ", idx)?,
+        None => writer.write_all(b" ")?,
+    };
+
+    if let Some(desc) = read.description.as_ref() {
+        writer.write_all(desc)?;
+    }
+    writer.write_all(b"\n")?;
+
+    // Sequence
+    writer.write_all(seq)?;
+    writer.write_all(b"\n+\n")?;
+
+    // Quality
+    writer.write_all(qual)?;
+    writer.write_all(b"\n")?;
+
+    Ok(())
+}
+
