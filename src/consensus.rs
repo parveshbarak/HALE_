@@ -183,22 +183,30 @@ fn consensus(data: ConsensusData, counts: &mut [u8]) -> Option<Vec<Vec<u8>>> {
                     corrected.push(base);
 
                     // ---- QUALITY COMPUTATION ----
-                    let mut max_q = 0u8;
+                    let mut counts: HashMap<u8, usize> = HashMap::default();
 
                     for i in 0..col.len() {
                         let b = col[i];
                         let q = quals[[col_idx, i]];
 
-                        if b != BASES_MAP[b'.' as usize]
-                            && BASES_UPPER[b as usize] == base
-                        {
-                            max_q = max_q.max(q);
+                        if b != BASES_MAP[b'.' as usize] && BASES_UPPER[b as usize] == base {
+                            *counts.entry(q).or_insert(0) += 1;
                         }
+                    }
 
+                    // Find the quality with the maximum count
+                    let mut majority_q = 0u8;
+                    let mut max_count = 0;
+
+                    for (&q, &count) in &counts {
+                        if count > max_count {
+                            max_count = count;
+                            majority_q = q;
+                        }
                     }
 
                     // convert raw Phred → FASTQ ASCII
-                    corrected_quals.push(max_q.min(60) + 33);
+                    corrected_quals.push(majority_q.min(60) + 33);
                 }
             }
         }
