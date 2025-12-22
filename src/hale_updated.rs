@@ -71,6 +71,34 @@ fn get_column_wise_row_indices(bases: &Array2<u8>, bases_with_col_indices: &mut 
 
 
 
+// Bitmask wil tell the rows to include in the counting
+// Then based on those rows only, count number of non '.' characters in each column of bases
+// If number of non '.' characters in any column are less than MIN_K_TH, then return false, else return true.
+fn is_coverage_constraint_satisfied(bases: &Array2<u8>, bitmask: u32) -> bool {
+    let (nrows, ncols) = bases.dim();
+
+    for col in 0..ncols {
+        let mut count = 0;
+
+        for row in 0..nrows {
+            // Check if this row is enabled in the bitmask
+            if (bitmask & (1 << row)) != 0 {
+                if bases[(row, col)] != b'.' {
+                    count += 1;
+                }
+            }
+        }
+
+        // If any column fails the threshold, constraint is not satisfied
+        if count < MIN_K_TH {
+            return false;
+        }
+    }
+
+    true
+}
+
+
 
 fn get_col_weight(bases: &Array2<u8>) -> Vec<f32> {
     let n = bases.nrows();
@@ -209,7 +237,7 @@ fn get_first_partition_cost_weighted(bitmask: u32, col: usize, bases: &Array2<u8
 fn get_partition_cost_weighted(bitmask: u32, col: usize, bases: &Array2<u8>, weights: &Vec<f32>) -> f32 {
     let n = bases.nrows();
     let set_bits = bitmask.count_ones() as usize;
-    if set_bits < MIN_K_TH as usize  {
+    if (set_bits < MIN_K_TH as usize) || (!is_coverage_constraint_satisfied(bases, bitmask))  {
         return u32::MAX as f32;
     }
     // iterate over rows in col column of bases and count freq of b'A', b'C', b'T', b'G', b'*', b'a', b'c', b't', b'g', b'#'
@@ -327,7 +355,7 @@ fn get_first_partition_cost(bitmask: u32, col: usize, bases: &Array2<u8>, base_c
 fn get_partition_cost(bitmask: u32, col: usize, bases: &Array2<u8>) -> usize {
     let n = bases.nrows();
     let set_bits = bitmask.count_ones() as usize;
-    if set_bits < MIN_K_TH as usize  {
+    if (set_bits < MIN_K_TH as usize) || (!is_coverage_constraint_satisfied(bases, bitmask))  {
         return u32::MAX as usize;
     }
     // iterate over rows in col column of bases and count freq of b'A', b'C', b'T', b'G', b'*', b'a', b'c', b't', b'g', b'#'
@@ -519,7 +547,7 @@ fn get_dp_for_hale_update(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut 
         // println!("bitmask: {:b}, cost: {}", bitmask, cost);
 
         let bitmask_set_bits = bitmask.count_ones() as usize;
-        if bitmask_set_bits >= MIN_K_TH as usize {
+        if (bitmask_set_bits >= MIN_K_TH as usize) && (is_coverage_constraint_satisfied(bases, bitmask)) {
             dp[[0, bitmask as usize]] = cost;
             test_mn = test_mn.min(cost);
         }
@@ -668,7 +696,7 @@ fn get_dp_for_hale_update(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut 
                 // temp_bitmask_cost = get_partition_cost(curr_col_inner_bitmask, col, &bases);
 
                 let set_bits_in_curr_col_inner_bitmask = curr_col_inner_bitmask.count_ones() as usize;
-                dp[[col, curr_col_inner_bitmask as usize]] = if min_cost < u32::MAX as f32 && set_bits_in_curr_col_inner_bitmask >= MIN_K_TH as usize {
+                dp[[col, curr_col_inner_bitmask as usize]] = if (min_cost < u32::MAX as f32) && (set_bits_in_curr_col_inner_bitmask >= MIN_K_TH as usize) && (is_coverage_constraint_satisfied(bases, curr_col_inner_bitmask)) {
                     min_cost + temp_bitmask_cost
                 } else {
                     u32::MAX as f32
