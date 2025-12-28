@@ -44,6 +44,88 @@ const BASE_FORWARD: [u8; 128] = [
 const ALIGNMENT_LEN_TH:usize = 4000;
 
 
+// # for debug purpose:
+
+#[derive(Debug)]
+struct CoverageStats {
+    min: usize,
+    median: f64,
+    mean: f64,
+    mode: usize,
+    p25: f64,
+    p75: f64,
+    p90: f64,
+}
+
+fn percentile(sorted: &[usize], p: f64) -> f64 {
+    let n = sorted.len();
+    if n == 0 {
+        return f64::NAN;
+    }
+    let rank = p * (n as f64 - 1.0);
+    let lo = rank.floor() as usize;
+    let hi = rank.ceil() as usize;
+
+    if lo == hi {
+        sorted[lo] as f64
+    } else {
+        let w = rank - lo as f64;
+        sorted[lo] as f64 * (1.0 - w) + sorted[hi] as f64 * w
+    }
+}
+
+fn coverage_stats(mut cov: Vec<usize>) -> CoverageStats {
+    cov.sort_unstable();
+    let n = cov.len();
+
+    let min = cov[0];
+
+    let mean = cov.iter().sum::<usize>() as f64 / n as f64;
+
+    let median = if n % 2 == 0 {
+        (cov[n / 2 - 1] + cov[n / 2]) as f64 / 2.0
+    } else {
+        cov[n / 2] as f64
+    };
+
+    let mut freq: HashMap<usize, usize> = HashMap::default();
+    for &v in &cov {
+        *freq.entry(v).or_insert(0) += 1;
+    }
+    
+    let mode = freq
+        .into_iter()
+        .max_by_key(|&(_, count)| count)
+        .map(|(val, _)| val)
+        .unwrap();
+
+    CoverageStats {
+        min,
+        median,
+        mean,
+        mode,
+        p25: percentile(&cov, 0.25),
+        p75: percentile(&cov, 0.75),
+        p90: percentile(&cov, 0.90),
+    }
+}
+
+
+fn column_coverage(bases: &Array2<u8>) -> Vec<usize> {
+    let (_rows, cols) = bases.dim();
+
+    (0..cols)
+        .map(|c| {
+            bases.column(c)
+                .iter()
+                .filter(|&&b| b != b'.')
+                .count()
+        })
+        .collect()
+}
+
+
+
 
 // Heuristics to filter rows from based on alignment accuracy
 // Heuristic 3:
@@ -55,10 +137,15 @@ const ALIGNMENT_LEN_TH:usize = 4000;
         // Valid segments are those that can be included without exceeding the top_k coverage limit and are at least ALIGNMENT_LEN_TH bases long.
         // The final output arrays, filtered_bases and filtered_quals, contain the selected and chopped segments, 
         // where excluded regions (or non-selected columns) are filled with the gap character (b'.').
-fn filter_rows_heuristic_three(bases: &Array2<u8>, quals: &Array2<u8>) -> (Array2<u8>, Array2<u8>) {
+fn filter_rows_heuristic_three(bases: &Array2<u8>, quals: &Array2<u8>) -> (Array2<u8>, Array2<u8>, Vec<(usize, usize, usize)>) {
     let top_k = 20;
     let ncols = bases.ncols();
     let mut coverage = vec![0usize; ncols];
+
+    // let mut coverage_ = column_coverage(&bases);
+    // let stats = coverage_stats(coverage_);
+    // println!("{:#?}, dim: {:?}", stats, bases.dim());
+
 
     let mut filtered_rows = Vec::new();
     filtered_rows.push((0, 0, ncols-1));
@@ -117,7 +204,7 @@ fn filter_rows_heuristic_three(bases: &Array2<u8>, quals: &Array2<u8>) -> (Array
     let mut filtered_bases = Array2::zeros((filtered_rows.len(), ncols));
     let mut filtered_quals = Array2::zeros((filtered_rows.len(), ncols));
     let mut row_idx = 0;
-    for (row, start, end) in filtered_rows {
+    for &(row, start, end) in &filtered_rows {
         for col in 0..ncols {
             if col >= start && col <= end {
                 filtered_bases[(row_idx, col)] = bases[(row, col)];
@@ -129,7 +216,7 @@ fn filter_rows_heuristic_three(bases: &Array2<u8>, quals: &Array2<u8>) -> (Array
         row_idx += 1;
     }
 
-    (filtered_bases, filtered_quals)
+    (filtered_bases, filtered_quals, filtered_rows)
 }
 
 
@@ -588,12 +675,58 @@ pub(crate) fn extract_features<'a, T: FeaturesOutput<'a>>(
 
         let full_bases_t = full_bases.t().to_owned();
         let full_quals_t = full_quals.t().to_owned();
-        let (bases_t, quals_t) = filter_rows_heuristic_three(&full_bases_t, &full_quals_t);
+        let (bases_t, quals_t, selected_rows) = filter_rows_heuristic_three(&full_bases_t, &full_quals_t);
         let bases = bases_t.t().to_owned();
         let quals = quals_t.t().to_owned();
 
         // let bases = full_bases.to_owned();
         // let quals = full_quals.to_owned();
+
+        // println!("full bases dim: {:#?} \n bases dim {:?}", full_bases_t, bases_t.dim());
+        
+        // println!("All overlapping read ids:\n {:?}", rid);
+        // for ow in &windows[i] {
+        //     println!("{:?}", ow.overlap.return_other_id(rid));
+        // }
+
+        
+        // println!("Read ids in top 20:\n {:?}", rid);
+        // let mut iter = 0;
+        // for j in 0..windows[i].len() {
+        //     while (iter < selected_rows.len() && selected_rows[iter].0 == j) {
+        //         let ow = windows[i][j].clone();
+        //         println!("{:?}", ow.overlap.return_other_id(rid));
+        //         iter += 1;
+        //     }
+        // }
+
+        // let mut out = String::new();
+        // out.push_str(&format!("All overlapping read ids for {:?}: ", rid));
+        // for ow in &windows[i] {
+        //     out.push_str(&format!("{:?},", ow.overlap.return_other_id(rid)));
+        // }
+        // print!("{out}");
+
+
+        // let mut out = String::new();
+        // out.push_str(&format!("Read ids in top 20 for {:?}: ", rid));
+        // let mut iter = 1;
+        // for j in 0..windows[i].len() {
+        //     while (iter < selected_rows.len() && selected_rows[iter].0 == j+1) {
+        //         let ow = windows[i][j].clone();
+        //         out.push_str(&format!("{:?},", ow.overlap.return_other_id(rid)));
+        //         iter += 1;
+        //     }
+        // }
+        // print!("{out}");
+
+        // assert!(
+        //     selected_rows.len() == bases.ncols(),
+        //     "selected_rows len {} does not match bases rows {}",
+        //     selected_rows.len(),
+        //     bases.ncols()
+        // );
+
 
 
         let qids: Vec<&str> = windows[i]
@@ -752,6 +885,8 @@ where
             supporeted.push(SupportedPos::new(tpos as u16, ins));
         }
     }
+
+    // println!("len_supported {:?}", supporeted.len());
 
     supporeted
 }

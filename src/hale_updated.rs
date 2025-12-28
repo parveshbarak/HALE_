@@ -773,12 +773,13 @@ fn compute_corrected_seq(bases: &Array2<u8>, partition: &Vec<u8>, corrections: &
 
 
 /// Finds the optimal correction sequence using the best partition
-pub fn hale_updated(bases: &Array2<u8>) -> Vec<u8> {
+pub fn hale_updated(bases: &Array2<u8>, partition__: &mut Vec<u8>) -> Vec<u8> {
     let n = bases.nrows();
     let m = bases.ncols();
     // println!("n: {}, m: {}", n, m);
     if(n < MIN_COV_TH as usize || m == 0) {
         let row0 = bases.row(0);
+        // println!("hii, m= {:?}, n= {:?}", m, n);
         return row0.to_vec();
     }
 
@@ -808,6 +809,7 @@ pub fn hale_updated(bases: &Array2<u8>) -> Vec<u8> {
         // panic!("min_count < th, returning pih, min_count: {}, total_bits: {}, bases.ncols(): {}", min_count, total_bits, bases.ncols());
         // later update it to consesnus or a better strategy
         // return two_approx_hale(bases);
+        // println!("hey, min_count={:?}", min_count);
         let row0 = bases.row(0);
         return row0.to_vec();
     }
@@ -827,6 +829,8 @@ pub fn hale_updated(bases: &Array2<u8>) -> Vec<u8> {
     backtrack(&bases, &row_counts, &mut dp, &mut partition);
     // partition should be set by now!
     // println!("partition: {:?}", partition);
+
+    partition__.clone_from(&partition);
 
 
     // Compute the corrected sequence

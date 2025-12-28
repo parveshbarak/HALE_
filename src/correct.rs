@@ -92,11 +92,12 @@ fn mec_modified(data: &mut ConsensusData, module: &str) -> Option<Vec<u8>> {
         let informative_bases = filter_bases(&bases, &window.supported);
         let transposed = informative_bases.t().to_owned();
 
-
+        let mut partition: Vec<u8> = Vec::new();
         let correction = if module == "hale" {
             // naive_modified_mec(&transposed)
             // naive_modified_mec_weighted(&transposed)
-            hale_updated(&transposed)
+            hale_updated(&transposed, &mut partition)
+            // hale_updated(&transposed)
         } else if module == "pih" {
             // pih: passive informative handling
             let row0 = transposed.row(0);
@@ -108,6 +109,20 @@ fn mec_modified(data: &mut ConsensusData, module: &str) -> Option<Vec<u8>> {
         let corr2 = correction.clone();
         window.bases_logits = Some(correction);
         window.info_logits = Some(random_f32_vector(corr2.len()));
+
+        // println!("Read indices in top 6:\n {:?} : {:?}", window.rid, partition);
+        // if(partition.len() > 0) {
+        //     assert!(
+        //         partition.len() == bases.ncols(),
+        //         "partition length {} does not match bases rows {}",
+        //         partition.len(),
+        //         bases.ncols()
+        //     );
+        //     // println!("Read indices in top 6:\n {:?} : {:?}", window.rid, partition);
+        // }
+        
+        partition.clear();
+        
 
     }
 
