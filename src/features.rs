@@ -729,23 +729,26 @@ where
             ins = 0;
         }
 
+        let mut cov = 0;
         counter.iter_mut().for_each(|(_, c)| *c = 0);
         col.iter().for_each(|&b| {
             if b == b'.' {
                 return;
             }
 
-            // if b == b'*' || b == b'#' {
-            //     return; // skip indels
-            // }
+            cov += 1;
+
+            if b == b'*' || b == b'#' {
+                return; // skip indels
+            }
 
             *counter.get_mut(&BASE_FORWARD[b as usize]).unwrap() += 1;
         });
 
         let n_supported = counter
             .iter()
-            .fold(0u8, |acc, (_, &c)| if c >= 3 { acc + 1 } else { acc });
-        if module != "consensus" && n_supported >= 2 {
+            .fold(0u8, |acc, (_, &c)| if c >= 2 { acc + 1 } else { acc });
+        if module != "consensus" && n_supported >= 2 && cov >= MIN_COV_TH {
             supporeted.push(SupportedPos::new(tpos as u16, ins));
         }
     }
