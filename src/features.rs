@@ -18,6 +18,8 @@ use crate::pbars::PBarNotification;
 use crate::windowing::{extract_windows, OverlapWindow};
 
 pub(crate) const TOP_K: usize = 20;
+const MIN_COV_TH: u32 = 6;
+
 
 const BASE_LOWER: [u8; 128] = [
     255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
@@ -80,7 +82,7 @@ fn filter_rows_heuristic_three(bases: &Array2<u8>, quals: &Array2<u8>) -> (Array
                         start_idx = col;
                         end_idx = col;
                     }
-                    if coverage[col] + 1 > top_k {
+                    if coverage[col] + 1 > TOP_K {
                         is_chop = true;
                         if end_idx - start_idx >= ALIGNMENT_LEN_TH {
                             valid_ranges.push((start_idx, end_idx-1));
