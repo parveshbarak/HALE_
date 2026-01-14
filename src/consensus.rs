@@ -5,6 +5,7 @@ use std::{cmp::Reverse, collections::BinaryHeap};
 use crossbeam_channel::{Receiver, Sender};
 use itertools::Itertools;
 use itertools::MinMaxResult::*;
+use std::cmp::min;
 
 use ndarray::{s, Axis};
 use rustc_hash::FxHashMap as HashMap;
@@ -115,6 +116,7 @@ fn consensus(data: ConsensusData, counts: &mut [u8]) -> Option<Vec<Vec<u8>>> {
         }
 
         let n_rows = window.bases.ncols() as usize;
+        // let n_rows = min(12, window.bases.ncols() as usize);
         let bases = window.bases.slice(s![.., ..n_rows]);
         let quals = window.quals.slice(s![.., ..n_rows]);
 
