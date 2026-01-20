@@ -2,6 +2,7 @@
 
 use ndarray::{Array1, Array2, Axis, ArrayView2};
 use std::cmp::max;
+use std::cmp::min;
 use std::collections::HashMap;
 
 // --- Constants and Mappings (Copied from inference.rs) ---
@@ -22,8 +23,111 @@ const BASES_UPPER_COUNTER: [usize; 10] = [0, 1, 2, 3, 4, 0, 1, 2, 3, 4];
 const BASES_UPPER_COUNTER2: [u8; 10] = [0, 1, 2, 3, 4, 0, 1, 2, 3, 4];
 // const BASES_LOWER_COUNTER2: [u8; 10] = [5, 6, 7, 8, 9, 5, 6, 7, 8, 9];
 
-const MIN_COV_TH: u32 = 18;
-const MIN_K_TH: u32 = 6;
+const MIN_COV_TH: u32 = 6;
+const MIN_K_TH: u32 = 4;
+
+
+
+
+
+
+
+// # for debug purpose:
+
+#[derive(Debug)]
+struct CoverageStats {
+    min: usize,
+    median: f64,
+    mean: f64,
+    mode: usize,
+    p25: f64,
+    p75: f64,
+    p90: f64,
+}
+
+fn percentile(sorted: &[usize], p: f64) -> f64 {
+    let n = sorted.len();
+    if n == 0 {
+        return f64::NAN;
+    }
+    let rank = p * (n as f64 - 1.0);
+    let lo = rank.floor() as usize;
+    let hi = rank.ceil() as usize;
+
+    if lo == hi {
+        sorted[lo] as f64
+    } else {
+        let w = rank - lo as f64;
+        sorted[lo] as f64 * (1.0 - w) + sorted[hi] as f64 * w
+    }
+}
+
+fn coverage_stats(mut cov: Vec<usize>) -> CoverageStats {
+    cov.sort_unstable();
+    let n = cov.len();
+
+    let min = cov[0];
+
+    let mean = cov.iter().sum::<usize>() as f64 / n as f64;
+
+    let median = if n % 2 == 0 {
+        (cov[n / 2 - 1] + cov[n / 2]) as f64 / 2.0
+    } else {
+        cov[n / 2] as f64
+    };
+
+    let mut freq: HashMap<usize, usize> = HashMap::default();
+    for &v in &cov {
+        *freq.entry(v).or_insert(0) += 1;
+    }
+    
+    let mode = freq
+        .into_iter()
+        .max_by_key(|&(_, count)| count)
+        .map(|(val, _)| val)
+        .unwrap();
+
+    CoverageStats {
+        min,
+        median,
+        mean,
+        mode,
+        p25: percentile(&cov, 0.25),
+        p75: percentile(&cov, 0.75),
+        p90: percentile(&cov, 0.90),
+    }
+}
+
+
+
+fn column_coverage__(bases: &Array2<u8>, partition: &[u8]) -> Vec<usize> {
+    let (rows, cols) = bases.dim();
+
+    (0..cols)
+        .map(|c| {
+            bases.column(c)
+                .iter()
+                .enumerate()
+                .filter(|(r, &b)| partition[*r] == 1 && b != 10)
+                .count()
+        })
+        .collect()
+}
+
+fn column_coverage(bases: &Array2<u8>) -> Vec<usize> {
+    let (_rows, cols) = bases.dim();
+
+    (0..cols)
+        .map(|c| {
+            bases.column(c)
+                .iter()
+                .filter(|&&b| b != 10)
+                .count()
+        })
+        .collect()
+}
+
+
 
 
 
@@ -77,24 +181,31 @@ fn get_column_wise_row_indices(bases: &Array2<u8>, bases_with_col_indices: &mut 
 fn is_coverage_constraint_satisfied(bases: &Array2<u8>, bitmask: u32) -> bool {
     let (nrows, ncols) = bases.dim();
 
-    for col in 0..ncols {
-        let mut count = 0;
+    // return true;
 
-        for row in 0..nrows {
-            // Check if this row is enabled in the bitmask
-            if (bitmask & (1 << row)) != 0 {
-                if bases[(row, col)] != b'.' {
-                    count += 1;
-                }
+    // Remaining coverage needed per column
+    let mut remaining = vec![MIN_K_TH as i32; ncols];
+
+    // Number of active rows left (for early failure)
+    let mut active_rows_left = bitmask.count_ones() as i32;
+
+    // Iterate only enabled rows (no per-cell bitmask checks)
+    let mut bm = bitmask;
+    while bm != 0 {
+        let row = bm.trailing_zeros() as usize;
+        bm &= bm - 1; // clear lowest set bit
+        active_rows_left -= 1;
+
+        let row_slice = bases.row(row);
+
+        for col in 0..ncols {
+            if remaining[col] > 0 && row_slice[col] != b'.' {
+                remaining[col] -= 1;
             }
-        }
-
-        // If any column fails the threshold, constraint is not satisfied
-        if count < MIN_K_TH {
-            return false;
         }
     }
 
+    // All columns satisfied
     true
 }
 
@@ -234,10 +345,11 @@ fn get_first_partition_cost_weighted(bitmask: u32, col: usize, bases: &Array2<u8
 
 
 // function to get cost of a partition
-fn get_partition_cost_weighted(bitmask: u32, col: usize, bases: &Array2<u8>, weights: &Vec<f32>) -> f32 {
+fn get_partition_cost_weighted(bitmask: u32, col: usize, bases: &Array2<u8>, weights: &Vec<f32>, min_k_th: usize) -> f32 {
     let n = bases.nrows();
+    // let min_k_th = n/3;
     let set_bits = bitmask.count_ones() as usize;
-    if (set_bits < MIN_K_TH as usize) || (!is_coverage_constraint_satisfied(bases, bitmask))  {
+    if (set_bits < min_k_th as usize) {
         return u32::MAX as f32;
     }
     // iterate over rows in col column of bases and count freq of b'A', b'C', b'T', b'G', b'*', b'a', b'c', b't', b'g', b'#'
@@ -354,8 +466,9 @@ fn get_first_partition_cost(bitmask: u32, col: usize, bases: &Array2<u8>, base_c
 // function to get cost of a partition
 fn get_partition_cost(bitmask: u32, col: usize, bases: &Array2<u8>) -> usize {
     let n = bases.nrows();
+    let min_k_th = n/3;
     let set_bits = bitmask.count_ones() as usize;
-    if (set_bits < MIN_K_TH as usize) || (!is_coverage_constraint_satisfied(bases, bitmask))  {
+    if (set_bits < min_k_th as usize)  {
         return u32::MAX as usize;
     }
     // iterate over rows in col column of bases and count freq of b'A', b'C', b'T', b'G', b'*', b'a', b'c', b't', b'g', b'#'
@@ -423,6 +536,10 @@ fn get_common_and_diff_rows(prev_col: usize, col: usize, bases: &Array2<u8>) -> 
 fn backtrack(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut Array2<f32>, partition: &mut Vec<u8>) {
     let m = bases.ncols();
     let n = bases.nrows();
+    let mut coverage_ = column_coverage(&bases);
+    coverage_.sort_unstable();
+    let n_cov = coverage_[0];
+    let min_k_th = n_cov/3;
 
     let total_bits = row_counts[m-1] as u32;
     let mut min_cost: f32 = u32::MAX as f32;
@@ -439,7 +556,7 @@ fn backtrack(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut Array2<f32>, 
     // println!("mincost_left: {}, bitmask: {:b}", min_cost, corr_mask);
 
     // let mut corr_mask_cost = get_partition_cost(corr_mask, m-1, &bases);
-    let mut corr_mask_cost = get_partition_cost_weighted(corr_mask, m-1, &bases, &weights);
+    let mut corr_mask_cost = get_partition_cost_weighted(corr_mask, m-1, &bases, &weights, min_k_th);
 
     // println!("corr_mask: {:b}, corr_mask_cost: {}, min_cost: {}", corr_mask, corr_mask_cost, min_cost);
 
@@ -494,7 +611,7 @@ fn backtrack(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut Array2<f32>, 
                 corr_mask = temp;
                 min_cost = cost_c;
                 // corr_mask_cost = get_partition_cost(corr_mask, col, &bases);
-                corr_mask_cost = get_partition_cost_weighted(corr_mask, col, &bases, &weights);
+                corr_mask_cost = get_partition_cost_weighted(corr_mask, col, &bases, &weights, min_k_th);
                 break;
             }
 
@@ -522,6 +639,12 @@ fn backtrack(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut Array2<f32>, 
 
 fn get_dp_for_hale_update(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut Array2<f32>, bases_with_col_indices: &Array2<u32>) {
     let m = bases.ncols();
+    let n = bases.nrows();
+    let mut coverage_ = column_coverage(&bases);
+    coverage_.sort_unstable();
+    let n_cov = coverage_[0];
+    let min_k_th = n_cov/3;
+
 
     // for column 0, we get all those bitmasks that set exactly k bits out of max_count bits
     // For all these columns, we get their cost and set cost of that bitmask in dp[0][bitmask]
@@ -547,7 +670,7 @@ fn get_dp_for_hale_update(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut 
         // println!("bitmask: {:b}, cost: {}", bitmask, cost);
 
         let bitmask_set_bits = bitmask.count_ones() as usize;
-        if (bitmask_set_bits >= MIN_K_TH as usize) && (is_coverage_constraint_satisfied(bases, bitmask)) {
+        if (bitmask_set_bits >= min_k_th as usize) {
             dp[[0, bitmask as usize]] = cost;
             test_mn = test_mn.min(cost);
         }
@@ -696,7 +819,7 @@ fn get_dp_for_hale_update(bases: &Array2<u8>, row_counts: &Vec<usize>, dp: &mut 
                 // temp_bitmask_cost = get_partition_cost(curr_col_inner_bitmask, col, &bases);
 
                 let set_bits_in_curr_col_inner_bitmask = curr_col_inner_bitmask.count_ones() as usize;
-                dp[[col, curr_col_inner_bitmask as usize]] = if (min_cost < u32::MAX as f32) && (set_bits_in_curr_col_inner_bitmask >= MIN_K_TH as usize) && (is_coverage_constraint_satisfied(bases, curr_col_inner_bitmask)) {
+                dp[[col, curr_col_inner_bitmask as usize]] = if (min_cost < u32::MAX as f32) && (set_bits_in_curr_col_inner_bitmask >= min_k_th as usize) {
                     min_cost + temp_bitmask_cost
                 } else {
                     u32::MAX as f32
@@ -831,6 +954,10 @@ pub fn hale_updated(bases: &Array2<u8>, partition__: &mut Vec<u8>) -> Vec<u8> {
     // println!("partition: {:?}", partition);
 
     partition__.clone_from(&partition);
+
+    // let mut coverage_ = column_coverage__(&bases, &partition);
+    // let stats = coverage_stats(coverage_);
+    // println!("{:#?}, dim: {:?}", stats, bases.dim());
 
 
     // Compute the corrected sequence

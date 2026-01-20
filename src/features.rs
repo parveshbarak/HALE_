@@ -4,10 +4,11 @@ use std::fs::{create_dir_all, File};
 use std::io::prelude::*;
 use std::io::{BufWriter, Result};
 use std::path::Path;
+use std::cmp::min;
 
 use crossbeam_channel::Sender;
 
-use ndarray::{s, stack, Array, Array2, ArrayBase, ArrayViewMut1, Axis, Data, Ix2};
+use ndarray::{s, stack, Array, Array1, Array2, ArrayBase, ArrayViewMut1, Axis, Data, Ix2};
 use ordered_float::OrderedFloat;
 
 use crate::aligners::{CigarIter, CigarOp};
@@ -18,7 +19,7 @@ use crate::pbars::PBarNotification;
 use crate::windowing::{extract_windows, OverlapWindow};
 
 pub(crate) const TOP_K: usize = 20;
-const MIN_COV_TH: u32 = 18;
+const MIN_COV_TH: u32 = 6;
 
 
 const BASE_LOWER: [u8; 128] = [
@@ -137,8 +138,8 @@ fn column_coverage(bases: &Array2<u8>) -> Vec<usize> {
         // Valid segments are those that can be included without exceeding the top_k coverage limit and are at least ALIGNMENT_LEN_TH bases long.
         // The final output arrays, filtered_bases and filtered_quals, contain the selected and chopped segments, 
         // where excluded regions (or non-selected columns) are filled with the gap character (b'.').
-fn filter_rows_heuristic_three(bases: &Array2<u8>, quals: &Array2<u8>) -> (Array2<u8>, Array2<u8>, Vec<(usize, usize, usize)>) {
-    let top_k = 20;
+fn filter_rows_heuristic_three(bases: &Array2<u8>, quals: &Array2<u8>) -> (Array2<u8>, Array2<u8>) {
+    // let top_k = 20;
     let ncols = bases.ncols();
     let mut coverage = vec![0usize; ncols];
 
@@ -169,7 +170,7 @@ fn filter_rows_heuristic_three(bases: &Array2<u8>, quals: &Array2<u8>) -> (Array
                         start_idx = col;
                         end_idx = col;
                     }
-                    if coverage[col] + 1 > top_k {
+                    if coverage[col] + 1 > TOP_K {
                         is_chop = true;
                         if end_idx - start_idx >= ALIGNMENT_LEN_TH {
                             valid_ranges.push((start_idx, end_idx-1));
@@ -216,9 +217,8 @@ fn filter_rows_heuristic_three(bases: &Array2<u8>, quals: &Array2<u8>) -> (Array
         row_idx += 1;
     }
 
-    (filtered_bases, filtered_quals, filtered_rows)
+    (filtered_bases, filtered_quals)
 }
-
 
 
 
@@ -532,6 +532,7 @@ fn get_features_for_window(
     //Get features
     let length = max_ins.iter().map(|v| *v as usize).sum::<usize>() + max_ins.len();
     let width = 1 + overlaps.len();
+    // let width = 1 + min(20, overlaps.len());
 
     let mut bases = Array::from_elem((length, width), b'.');
     let mut quals = Array::from_elem((length, width), b'!');
@@ -547,6 +548,7 @@ fn get_features_for_window(
     );
 
     // Write top-k overlaps for the window
+    // overlaps.iter().take(width-1).enumerate().for_each(|(i, ow)| {
     overlaps.iter().enumerate().for_each(|(i, ow)| {
         let qid = ow.overlap.return_other_id(tid);
         get_features_for_ol_window(
@@ -564,6 +566,199 @@ fn get_features_for_window(
 
     (bases, quals)
 }
+
+
+
+
+
+
+
+
+
+
+// use rustc_hash::FxHashMap as HashMap;
+// use ndarray::{s, Array, Array1, Array2, ArrayViewMut1, Axis};
+// // Assuming HAECRecord, OverlapWindow, ALIGNMENT_LEN_TH, etc. are available in scope
+
+fn get_features_for_window_filtered(
+    overlaps: &mut [OverlapWindow],
+    ovlps_cigar_map: &HashMap<u32, &Vec<u8>>,
+    tid: u32,
+    reads: &[HAECRecord],
+    max_ins: &[u16],
+    window_length: usize, 
+    tbuffer: &[u8],
+    qbuffer: &mut [u8],
+) -> (Array2<u8>, Array2<u8>) {
+    
+    // 1. Calculate dimensions
+    let length = max_ins.iter().map(|v| *v as usize).sum::<usize>() + max_ins.len();
+    
+    // 2. Setup reusable temporary buffers
+    let mut temp_bases = Array1::from_elem(length, b'.');
+    let mut temp_quals = Array1::from_elem(length, b'!');
+    
+    // 3. Setup coverage tracker
+    let mut coverage = vec![0usize; length];
+    
+    // 4. Output storage
+    let mut accepted_bases_flat = Vec::new();
+    let mut accepted_quals_flat = Vec::new();
+    let mut accepted_count = 0;
+
+    let mut push_segment = |bases_col: &Array1<u8>, quals_col: &Array1<u8>, start: usize, end: usize| {
+        for i in 0..length {
+            if i >= start && i <= end {
+                accepted_bases_flat.push(bases_col[i]);
+                accepted_quals_flat.push(quals_col[i]);
+            } else {
+                accepted_bases_flat.push(b'.');
+                accepted_quals_flat.push(b'!');
+            }
+        }
+        accepted_count += 1;
+    };
+
+    // --- Step A: Process Target ---
+    write_target_for_window(
+        &reads[tid as usize],
+        &max_ins,
+        temp_bases.view_mut(),
+        temp_quals.view_mut(),
+        window_length,
+        tbuffer,
+    );
+
+    push_segment(&temp_bases, &temp_quals, 0, length - 1);
+    for c in &mut coverage { *c += 1; }
+
+    let mut cov_not_updated_ct = 0;
+
+    // --- Step B: Process Overlaps with Early Exit ---
+    for (_i, ow) in overlaps.iter().enumerate() {
+        temp_bases.fill(b'.');
+        temp_quals.fill(b'!');
+
+        let qid = ow.overlap.return_other_id(tid);
+        
+        get_features_for_ol_window(
+            temp_bases.view_mut(),
+            temp_quals.view_mut(),
+            ow,
+            ovlps_cigar_map.get(&qid).unwrap(),
+            &reads[qid as usize],
+            tid,
+            &max_ins,
+            qbuffer,
+        );
+
+        let mut is_chop = false;
+        let mut valid_ranges = Vec::new();
+        let mut start_idx = 0;
+        let mut end_idx = 0;
+        let mut no_chop_start = 0; 
+        let mut no_chop_end = length - 1; 
+        let mut first_non_gap_found = false;
+
+        for (col, &val) in temp_bases.iter().enumerate() {
+            if val != b'.' {
+                if !first_non_gap_found {
+                    first_non_gap_found = true;
+                    no_chop_start = col;
+                    start_idx = col;
+                    end_idx = col;
+                }
+                
+                if coverage[col] + 1 > TOP_K {
+                    is_chop = true;
+                    // Use Constant for heuristic check
+                    if end_idx - start_idx >= ALIGNMENT_LEN_TH {
+                        valid_ranges.push((start_idx, end_idx - 1));
+                    }
+                    start_idx = col + 1;
+                }
+                end_idx += 1; 
+            } else {
+                if first_non_gap_found {
+                    no_chop_end = col - 1;
+                    break; 
+                }
+            }
+        }
+
+        let mut coverage_updated = false;
+
+        if !is_chop {
+            if first_non_gap_found {
+                push_segment(&temp_bases, &temp_quals, no_chop_start, no_chop_end);
+                for k in no_chop_start..=no_chop_end { coverage[k] += 1; }
+                coverage_updated = true;
+            }
+        } else if is_chop && !valid_ranges.is_empty() {
+            for (start, end) in valid_ranges {
+                push_segment(&temp_bases, &temp_quals, start, end);
+                for k in start..=end { coverage[k] += 1; }
+            }
+            coverage_updated = true;
+        }
+
+        // -------------------------------------------------------------
+        // EARLY EXIT CHECK
+        // -------------------------------------------------------------
+        if coverage_updated {
+            let mut max_low_cov_run = 0;
+            let mut current_run = 0;
+
+            for &c in &coverage {
+                if c < TOP_K {
+                    current_run += 1;
+                } else {
+                    if current_run > max_low_cov_run {
+                        max_low_cov_run = current_run;
+                    }
+                    current_run = 0;
+                }
+            }
+            // Check trailing run
+            if current_run > max_low_cov_run {
+                max_low_cov_run = current_run;
+            }
+
+            // If the largest coverage gap is smaller than the threshold, stop.
+            if max_low_cov_run < ALIGNMENT_LEN_TH {
+                // println!("hii: {:?}", _i);
+                break;
+            }
+        } else {
+            cov_not_updated_ct += 1;
+        }
+        
+        // if(cov_not_updated_ct > 10) {
+        //     break;
+        // }
+    }
+
+    // --- Step C: Reshape and Return ---
+    let bases_t = Array2::from_shape_vec((accepted_count, length), accepted_bases_flat)
+        .expect("Shape mismatch in bases generation");
+    let quals_t = Array2::from_shape_vec((accepted_count, length), accepted_quals_flat)
+        .expect("Shape mismatch in quals generation");
+
+    (bases_t.t().to_owned(), quals_t.t().to_owned())
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 fn overlap_window_filter(cigar: &[u8]) -> bool {
@@ -662,7 +857,7 @@ pub(crate) fn extract_features<'a, T: FeaturesOutput<'a>>(
             win_len,
         );
 
-        let (full_bases, full_quals) = get_features_for_window(
+        let (full_bases, full_quals) = get_features_for_window_filtered(
             &mut windows[i],
             &ovlps_cigar_map,
             rid,
@@ -673,14 +868,14 @@ pub(crate) fn extract_features<'a, T: FeaturesOutput<'a>>(
             qbuf,
         );
 
-        let full_bases_t = full_bases.t().to_owned();
-        let full_quals_t = full_quals.t().to_owned();
-        let (bases_t, quals_t, selected_rows) = filter_rows_heuristic_three(&full_bases_t, &full_quals_t);
-        let bases = bases_t.t().to_owned();
-        let quals = quals_t.t().to_owned();
+        // let full_bases_t = full_bases.t().to_owned();
+        // let full_quals_t = full_quals.t().to_owned();
+        // let (bases_t, quals_t) = filter_rows_heuristic_three(&full_bases_t, &full_quals_t);
+        // let bases = bases_t.t().to_owned();
+        // let quals = quals_t.t().to_owned();
 
-        // let bases = full_bases.to_owned();
-        // let quals = full_quals.to_owned();
+        let bases = full_bases.to_owned();
+        let quals = full_quals.to_owned();
 
         // println!("full bases dim: {:#?} \n bases dim {:?}", full_bases_t, bases_t.dim());
         
@@ -699,6 +894,18 @@ pub(crate) fn extract_features<'a, T: FeaturesOutput<'a>>(
         //         iter += 1;
         //     }
         // }
+
+        // println!("Read ids in top 20:\n {:?}", rid);
+        // let mut iter = 0;
+        // for j in 0..windows[i].len() {
+        //     while (iter < 6 && selected_rows[iter].0 == j) {
+        //         let ow = windows[i][j].clone();
+        //         println!("{:?}", ow.overlap.return_other_id(rid));
+        //         iter += 1;
+        //     }
+        // }
+
+
 
         // let mut out = String::new();
         // out.push_str(&format!("All overlapping read ids for {:?}: ", rid));
@@ -880,7 +1087,7 @@ where
 
         let n_supported = counter
             .iter()
-            .fold(0u8, |acc, (_, &c)| if c >= 3 { acc + 1 } else { acc });
+            .fold(0u8, |acc, (_, &c)| if c >= 2 { acc + 1 } else { acc });
         if module != "consensus" && n_supported >= 2 && cov >= MIN_COV_TH {
             supporeted.push(SupportedPos::new(tpos as u16, ins));
         }
@@ -1029,6 +1236,14 @@ impl CorrectOutput {
             batch_size: batch_size,
         }
     }
+
+    pub(crate) fn finish(mut self) {
+        if !self.features.is_empty() {
+            let data = prepare_examples(self.features.drain(..), self.batch_size);
+            self.sender.send(data).unwrap();
+        }
+        // sender is dropped here when `self` is dropped
+    }
 }
 
 impl<'a> FeaturesOutput<'a> for CorrectOutput {
@@ -1070,6 +1285,7 @@ impl<'a> FeaturesOutput<'a> for CorrectOutput {
         let data = prepare_examples(self.features.drain(..), self.batch_size);
         self.sender.send(data).unwrap();
     }
+
 }
 
 #[derive(npyz::AutoSerialize, npyz::Serialize, PartialEq, Eq, Hash, Clone, Copy)]
