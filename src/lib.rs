@@ -49,7 +49,7 @@ pub enum AlnMode<V: AsRef<Path>> {
 }
 
 
-pub fn error_correction<T, U, V>(
+pub fn error_correction_p<T, U, V>(
     reads_path: T,
     output_path: U,
     cluster_path: &str,
@@ -145,6 +145,153 @@ pub fn error_correction<T, U, V>(
 }
 
 
+
+
+pub fn error_correction<T, U, V>(
+    reads_path: T,
+    output_path: U,
+    cluster_path: &str,
+    window_size: u32,
+    batch_size: usize,
+    n_threads: usize,
+    aln_mode: AlnMode<V>,
+    module: &str,
+) where
+    T: AsRef<Path> + Send + Sync,
+    U: AsRef<Path> + Send + Sync,
+    V: AsRef<Path> + Send,
+{
+    let num_threads = n_threads;
+    // let n_correct = std::cmp::max(1, n_threads / 2);
+    // let n_extract = n_threads.saturating_sub(n_correct);
+    
+    let num_consensus_threads = 4; 
+
+    // cluster is an optimization that can help reduce memory by parsing only those reads that in in current all-vs-all overlaps
+    let (core, neighbour) = read_cluster(&cluster_path);
+    let mut reads = parse_reads(&reads_path, window_size, &core, &neighbour);
+    let max_len = reads.iter().map(|r| r.seq.len()).max().unwrap();
+
+    let (alns_sender, alns_receiver) = bounded(ALN_CHANNEL_CAPACITY);
+    let (writer_sender, writer_receiver) = unbounded();
+    let (pbar_sender, pbar_receiver) = unbounded();
+
+    thread::scope(|s| {
+        let pbar_s = pbar_sender.clone();
+        s.spawn(|| {
+            alignment_reader(
+                &reads,
+                &reads_path,
+                &core,
+                aln_mode,
+                num_threads,
+                alns_sender,
+                pbar_s,
+            );
+        });
+
+        s.spawn(|| correction_writer_2(&reads, output_path, writer_receiver, pbar_sender));
+
+        let (infer_sender, infer_recv) = bounded(INFER_CHANNEL_CAP_FACTOR * num_threads);
+        let (cons_sender, cons_recv) = unbounded();
+        
+        // --- CHANGE START: Removed the single `writer_s` clone here ---
+
+        for _ in 0..num_threads {
+            let alns_r = alns_receiver.clone();
+            let infer_s = infer_sender.clone();
+
+            let ref_reads = &reads;
+            s.spawn(move || {
+                let mut feats_output = CorrectOutput::new(infer_s, batch_size);
+                let mut tbuf = vec![0; max_len];
+                let mut qbuf = vec![0; max_len];
+
+                loop {
+                    let (rid, alns) = match alns_r.recv() {
+                        Ok(out) => out,
+                        Err(_) => break,
+                    };
+
+                    extract_features(
+                        rid,
+                        ref_reads,
+                        alns,
+                        // window_size,
+                        module,
+                        (&mut tbuf, &mut qbuf),
+                        &mut feats_output,
+                    );
+                }
+            });
+
+            let infer_recv_cloned = infer_recv.clone();
+            let cons_sender_cloned = cons_sender.clone();
+            s.spawn(move || correct_worker(module, infer_recv_cloned, cons_sender_cloned));
+        }
+
+        // for _ in 0..n_extract {
+        //     let alns_r = alns_receiver.clone();
+        //     let infer_s = infer_sender.clone();
+        //     let ref_reads = &reads;
+
+        //     s.spawn(move || {
+        //         let mut feats_output = CorrectOutput::new(infer_s, batch_size);
+        //         let mut tbuf = vec![0; max_len];
+        //         let mut qbuf = vec![0; max_len];
+
+        //         loop {
+        //             let (rid, alns) = match alns_r.recv() {
+        //                 Ok(out) => out,
+        //                 Err(_) => break,
+        //             };
+
+        //             extract_features(
+        //                 rid,
+        //                 ref_reads,
+        //                 alns,
+        //                 module,
+        //                 (&mut tbuf, &mut qbuf),
+        //                 &mut feats_output,
+        //             );
+        //         }
+        //     });
+        // }
+        
+        
+        // for _ in 0..n_correct {
+        //     let infer_recv_cloned = infer_recv.clone();
+        //     let cons_sender_cloned = cons_sender.clone();
+            
+        //     s.spawn(move || {
+        //         correct_worker(
+        //             module,
+        //             infer_recv_cloned,
+        //             cons_sender_cloned,
+        //         )
+        //     });
+        // }
+
+        // --- CHANGE START: Parallelize Consensus ---
+        // Instead of spawning 1 worker, we spawn 4.
+        // We clone the receiver and sender for each thread.
+        for _ in 0..num_consensus_threads {
+            let c_recv = cons_recv.clone();
+            let w_sender = writer_sender.clone();
+            s.spawn(move || consensus_worker(c_recv, w_sender));
+        }
+        // --- CHANGE END ---
+
+        drop(infer_sender);
+        drop(cons_sender);
+        
+        // Crucial: drop the main thread's writer_sender so the writer loop terminates
+        // when all worker threads are done.
+        drop(writer_sender); 
+
+        track_progress(pbar_receiver);
+    });
+}
 
 
 fn read_cluster(cluster_path: &&str) -> (Option<HashSet<String>>, Option<HashSet<String>>) {

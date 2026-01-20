@@ -5,9 +5,12 @@ use hale::{error_correction, AlnMode};
 
 // high-performance memory allocator
 use jemallocator::Jemalloc;
+// use dhat::{Alloc, Profiler};
 
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
+// #[global_allocator]
+// static ALLOC: Alloc = Alloc;
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -57,7 +60,7 @@ struct CorrectArgs {
 
     #[arg(
         short = 't',
-        default_value = "128",
+        default_value = "64",
         help = "number of threads"
     )]
     n_threads: usize,
@@ -84,6 +87,8 @@ struct CorrectArgs {
 }
 
 fn main() {
+    // let _profiler = Profiler::new_heap();
+
     let cli = Cli::parse();
 
     match cli.command {

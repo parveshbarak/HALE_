@@ -580,32 +580,216 @@ fn get_features_for_window(
 // use ndarray::{s, Array, Array1, Array2, ArrayViewMut1, Axis};
 // // Assuming HAECRecord, OverlapWindow, ALIGNMENT_LEN_TH, etc. are available in scope
 
+// fn get_features_for_window_filtered_prev(
+//     overlaps: &mut [OverlapWindow],
+//     ovlps_cigar_map: &HashMap<u32, &Vec<u8>>,
+//     tid: u32,
+//     reads: &[HAECRecord],
+//     max_ins: &[u16],
+//     window_length: usize, 
+//     tbuffer: &[u8],
+//     qbuffer: &mut [u8],
+// ) -> (Array2<u8>, Array2<u8>) {
+    
+//     // 1. Calculate dimensions
+//     let length = max_ins.iter().map(|v| *v as usize).sum::<usize>() + max_ins.len();
+    
+//     // 2. Setup reusable temporary buffers
+//     let mut temp_bases = Array1::from_elem(length, b'.');
+//     let mut temp_quals = Array1::from_elem(length, b'!');
+    
+//     // 3. Setup coverage tracker
+//     let mut coverage = vec![0usize; length];
+    
+//     // 4. Output storage
+//     let mut accepted_bases_flat = Vec::new();
+//     let mut accepted_quals_flat = Vec::new();
+//     let mut accepted_count = 0;
+
+//     let mut push_segment = |bases_col: &Array1<u8>, quals_col: &Array1<u8>, start: usize, end: usize| {
+//         for i in 0..length {
+//             if i >= start && i <= end {
+//                 accepted_bases_flat.push(bases_col[i]);
+//                 accepted_quals_flat.push(quals_col[i]);
+//             } else {
+//                 accepted_bases_flat.push(b'.');
+//                 accepted_quals_flat.push(b'!');
+//             }
+//         }
+//         accepted_count += 1;
+//     };
+
+//     // --- Step A: Process Target ---
+//     write_target_for_window(
+//         &reads[tid as usize],
+//         &max_ins,
+//         temp_bases.view_mut(),
+//         temp_quals.view_mut(),
+//         window_length,
+//         tbuffer,
+//     );
+
+//     push_segment(&temp_bases, &temp_quals, 0, length - 1);
+//     for c in &mut coverage { *c += 1; }
+
+//     let mut cov_not_updated_ct = 0;
+
+//     // --- Step B: Process Overlaps with Early Exit ---
+//     for (_i, ow) in overlaps.iter().enumerate() {
+//         temp_bases.fill(b'.');
+//         temp_quals.fill(b'!');
+
+//         let qid = ow.overlap.return_other_id(tid);
+        
+//         get_features_for_ol_window(
+//             temp_bases.view_mut(),
+//             temp_quals.view_mut(),
+//             ow,
+//             ovlps_cigar_map.get(&qid).unwrap(),
+//             &reads[qid as usize],
+//             tid,
+//             &max_ins,
+//             qbuffer,
+//         );
+
+//         let mut is_chop = false;
+//         let mut valid_ranges = Vec::new();
+//         let mut start_idx = 0;
+//         let mut end_idx = 0;
+//         let mut no_chop_start = 0; 
+//         let mut no_chop_end = length - 1; 
+//         let mut first_non_gap_found = false;
+
+//         for (col, &val) in temp_bases.iter().enumerate() {
+//             if val != b'.' {
+//                 if !first_non_gap_found {
+//                     first_non_gap_found = true;
+//                     no_chop_start = col;
+//                     start_idx = col;
+//                     end_idx = col;
+//                 }
+                
+//                 if coverage[col] + 1 > TOP_K {
+//                     is_chop = true;
+//                     // Use Constant for heuristic check
+//                     if end_idx - start_idx >= ALIGNMENT_LEN_TH {
+//                         valid_ranges.push((start_idx, end_idx - 1));
+//                     }
+//                     start_idx = col + 1;
+//                 }
+//                 end_idx += 1; 
+//             } else {
+//                 if first_non_gap_found {
+//                     no_chop_end = col - 1;
+//                     break; 
+//                 }
+//             }
+//         }
+
+//         let mut coverage_updated = false;
+
+//         if !is_chop {
+//             if first_non_gap_found {
+//                 push_segment(&temp_bases, &temp_quals, no_chop_start, no_chop_end);
+//                 for k in no_chop_start..=no_chop_end { coverage[k] += 1; }
+//                 coverage_updated = true;
+//             }
+//         } else if is_chop && !valid_ranges.is_empty() {
+//             for (start, end) in valid_ranges {
+//                 push_segment(&temp_bases, &temp_quals, start, end);
+//                 for k in start..=end { coverage[k] += 1; }
+//             }
+//             coverage_updated = true;
+//         }
+
+//         // -------------------------------------------------------------
+//         // EARLY EXIT CHECK
+//         // -------------------------------------------------------------
+//         if coverage_updated {
+//             let mut max_low_cov_run = 0;
+//             let mut current_run = 0;
+
+//             for &c in &coverage {
+//                 if c < TOP_K {
+//                     current_run += 1;
+//                 } else {
+//                     if current_run > max_low_cov_run {
+//                         max_low_cov_run = current_run;
+//                     }
+//                     current_run = 0;
+//                 }
+//             }
+//             // Check trailing run
+//             if current_run > max_low_cov_run {
+//                 max_low_cov_run = current_run;
+//             }
+
+//             // If the largest coverage gap is smaller than the threshold, stop.
+//             if max_low_cov_run < ALIGNMENT_LEN_TH {
+//                 // println!("hii: {:?}", _i);
+//                 break;
+//             }
+//         } else {
+//             cov_not_updated_ct += 1;
+//         }
+        
+//         // if(cov_not_updated_ct > 10) {
+//         //     break;
+//         // }
+//     }
+
+//     // --- Step C: Reshape and Return ---
+//     let bases_t = Array2::from_shape_vec((accepted_count, length), accepted_bases_flat)
+//         .expect("Shape mismatch in bases generation");
+//     let quals_t = Array2::from_shape_vec((accepted_count, length), accepted_quals_flat)
+//         .expect("Shape mismatch in quals generation");
+
+//     (bases_t.t().to_owned(), quals_t.t().to_owned())
+// }
+
+
+
+
+
+
+
 fn get_features_for_window_filtered(
     overlaps: &mut [OverlapWindow],
     ovlps_cigar_map: &HashMap<u32, &Vec<u8>>,
     tid: u32,
     reads: &[HAECRecord],
     max_ins: &[u16],
-    window_length: usize, 
+    window_length: usize,
     tbuffer: &[u8],
-    qbuffer: &mut [u8],
+    qbuffer: &mut [u8]
+    // top_k: usize,     // Pass TOP_K as arg
+    // aln_len_th: usize // Pass ALIGNMENT_LEN_TH as arg
 ) -> (Array2<u8>, Array2<u8>) {
     
-    // 1. Calculate dimensions
+    // 1. Calculate dimensions and Pre-calculate Insertion Prefix Sums
+    //    This allows us to map tpos -> feature_idx in O(1)
     let length = max_ins.iter().map(|v| *v as usize).sum::<usize>() + max_ins.len();
     
+    let mut ins_prefix_sum = vec![0usize; max_ins.len() + 1];
+    let mut current_sum = 0;
+    for (i, &val) in max_ins.iter().enumerate() {
+        current_sum += val as usize;
+        ins_prefix_sum[i + 1] = current_sum;
+    }
+
     // 2. Setup reusable temporary buffers
     let mut temp_bases = Array1::from_elem(length, b'.');
     let mut temp_quals = Array1::from_elem(length, b'!');
-    
+
     // 3. Setup coverage tracker
     let mut coverage = vec![0usize; length];
-    
+
     // 4. Output storage
     let mut accepted_bases_flat = Vec::new();
     let mut accepted_quals_flat = Vec::new();
     let mut accepted_count = 0;
 
+    // Helper to push segments
     let mut push_segment = |bases_col: &Array1<u8>, quals_col: &Array1<u8>, start: usize, end: usize| {
         for i in 0..length {
             if i >= start && i <= end {
@@ -634,8 +818,68 @@ fn get_features_for_window_filtered(
 
     let mut cov_not_updated_ct = 0;
 
-    // --- Step B: Process Overlaps with Early Exit ---
+    // --- Step B: Process Overlaps ---
     for (_i, ow) in overlaps.iter().enumerate() {
+        // [OPTIMIZATION START] -----------------------------------------------
+        // Before generating features, check if this read covers ANY useful region.
+        
+        // 1. Determine Target Range (tstart, tend)
+        // Logic copied from get_features_for_ol_window to match coordinate system
+        let (tstart, tend) = if ow.overlap.tid != tid {
+            (ow.overlap.qstart, ow.overlap.qend)
+        } else {
+            (ow.overlap.tstart, ow.overlap.tend)
+        };
+
+        // 2. Map Target Range to Feature Index Range
+        // Feature Idx = tpos + Sum(max_ins before tpos)
+        // We use min(length) to ensure we don't go out of bounds if offsets are weird
+        let idx_start = (tstart as usize + ins_prefix_sum[tstart as usize]).min(length);
+        let idx_end = (tend as usize + ins_prefix_sum[tend as usize]).min(length);
+
+        // 3. Scan Coverage in this projected range
+        // We look for a contiguous gap of size >= ALIGNMENT_LEN_TH where coverage < top_k
+        let mut potential_useful_len = 0;
+        let mut is_worth_processing = false;
+
+        for k in idx_start..idx_end {
+            if coverage[k] < TOP_K {
+                potential_useful_len += 1;
+                // If we find ONE valid segment long enough, the read is worth parsing
+                if potential_useful_len >= ALIGNMENT_LEN_TH {
+                    is_worth_processing = true;
+                    break;
+                }
+            } else {
+                potential_useful_len = 0;
+            }
+        }
+
+        // 4. Skip if useless
+        if !is_worth_processing {
+            // cov_not_updated_ct += 1;
+            // // Early exit check inside the skip block
+            // // (If we skip many times, we might want to check if the window is full)
+            //  if cov_not_updated_ct > 500 { // Check occasionally
+            //     let mut max_low_cov_run = 0;
+            //     let mut current_run = 0;
+            //     for &c in &coverage {
+            //         if c < top_k { current_run += 1; } 
+            //         else {
+            //             if current_run > max_low_cov_run { max_low_cov_run = current_run; }
+            //             current_run = 0;
+            //         }
+            //     }
+            //     if current_run > max_low_cov_run { max_low_cov_run = current_run; }
+                
+            //     if max_low_cov_run < ALIGNMENT_LEN_TH { break; }
+            //     cov_not_updated_ct = 0; // Reset counter
+            // }
+            continue;
+        }
+        // [OPTIMIZATION END] -------------------------------------------------
+
+        // Reset buffers
         temp_bases.fill(b'.');
         temp_quals.fill(b'!');
 
@@ -652,6 +896,7 @@ fn get_features_for_window_filtered(
             qbuffer,
         );
 
+        // --- Heuristic Three Filter Logic ---
         let mut is_chop = false;
         let mut valid_ranges = Vec::new();
         let mut start_idx = 0;
@@ -671,7 +916,6 @@ fn get_features_for_window_filtered(
                 
                 if coverage[col] + 1 > TOP_K {
                     is_chop = true;
-                    // Use Constant for heuristic check
                     if end_idx - start_idx >= ALIGNMENT_LEN_TH {
                         valid_ranges.push((start_idx, end_idx - 1));
                     }
@@ -702,10 +946,10 @@ fn get_features_for_window_filtered(
             coverage_updated = true;
         }
 
-        // -------------------------------------------------------------
-        // EARLY EXIT CHECK
-        // -------------------------------------------------------------
         if coverage_updated {
+            cov_not_updated_ct = 0; // Reset consecutive skip counter
+            
+            // Global Saturation Check (Existing logic)
             let mut max_low_cov_run = 0;
             let mut current_run = 0;
 
@@ -719,26 +963,16 @@ fn get_features_for_window_filtered(
                     current_run = 0;
                 }
             }
-            // Check trailing run
-            if current_run > max_low_cov_run {
-                max_low_cov_run = current_run;
-            }
+            if current_run > max_low_cov_run { max_low_cov_run = current_run; }
 
-            // If the largest coverage gap is smaller than the threshold, stop.
             if max_low_cov_run < ALIGNMENT_LEN_TH {
-                // println!("hii: {:?}", _i);
                 break;
             }
         } else {
             cov_not_updated_ct += 1;
         }
-        
-        // if(cov_not_updated_ct > 10) {
-        //     break;
-        // }
     }
 
-    // --- Step C: Reshape and Return ---
     let bases_t = Array2::from_shape_vec((accepted_count, length), accepted_bases_flat)
         .expect("Shape mismatch in bases generation");
     let quals_t = Array2::from_shape_vec((accepted_count, length), accepted_quals_flat)
@@ -746,10 +980,6 @@ fn get_features_for_window_filtered(
 
     (bases_t.t().to_owned(), quals_t.t().to_owned())
 }
-
-
-
-
 
 
 
