@@ -60,7 +60,7 @@ struct CorrectArgs {
 
     #[arg(
         short = 't',
-        default_value = "64",
+        default_value = "128",
         help = "number of threads"
     )]
     n_threads: usize,
