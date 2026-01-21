@@ -66,6 +66,20 @@ struct CorrectArgs {
     n_threads: usize,
 
     #[arg(
+        short = 'd',
+        default_value = "30",
+        help = "depth/coverage of the dataset"
+    )]
+    coverage: usize,
+
+    #[arg(
+        short = 'p',
+        default_value = "2",
+        help = "ploidy of the genome"
+    )]
+    ploidy: usize,
+
+    #[arg(
         short = 'c',
         default_value = "",
         help = "Path to a cluster of reads."
@@ -107,6 +121,8 @@ fn main() {
                 args.window_size,
                 args.batch_size,
                 args.n_threads,
+                args.coverage,
+                args.ploidy,
                 mode,
                 &args.module,
             );

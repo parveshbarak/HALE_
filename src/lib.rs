@@ -58,6 +58,8 @@ pub fn error_correction<T, U, V>(
     window_size: u32,
     batch_size: usize,
     n_threads: usize,
+    coverage: usize,
+    ploidy: usize,
     aln_mode: AlnMode<V>,
     module: &str,
 ) where
@@ -65,6 +67,9 @@ pub fn error_correction<T, U, V>(
     U: AsRef<Path> + Send + Sync,
     V: AsRef<Path> + Send,
 {   
+    let TOP_K = coverage/ploidy;
+
+
     let mut num_threads = n_threads;
     let mut n_correct = std::cmp::min(2, n_threads / 2);
     let mut n_extract = std::cmp::max(1, n_threads - n_correct);
@@ -126,6 +131,7 @@ pub fn error_correction<T, U, V>(
                         rid,
                         ref_reads,
                         alns,
+                        TOP_K,
                         module,
                         (&mut tbuf, &mut qbuf),
                         &mut feats_output,
